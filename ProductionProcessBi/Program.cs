@@ -28,6 +28,7 @@ var dataPath = Path.Combine(app.Environment.ContentRootPath, "data", "process-re
 var sourceSettingsPath = Path.Combine(app.Environment.ContentRootPath, "data", "data-source.json");
 var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
 var definitions = new ReportDefinitionStore(Path.Combine(app.Environment.ContentRootPath, "data", "report-definitions.json"), options);
+var dataSources = new DataSourceStore(Path.Combine(app.Environment.ContentRootPath, "data", "data-sources.json"), sourceSettingsPath, options);
 definitions.EnsureSeed();
 
 IReadOnlyList<ProcessRecord> ReadRecords()
@@ -66,12 +67,23 @@ IReadOnlyList<ProcessRecord> ReadRecords()
 
 string? ReadSqlitePath()
 {
+    var active = dataSources.GetActive();
+    if (active?.Provider.Equals("sqlite", StringComparison.OrdinalIgnoreCase) == true)
+        return active.ConnectionString.Replace("Data Source=", "", StringComparison.OrdinalIgnoreCase).Split(';')[0].Trim();
     var environmentPath = Environment.GetEnvironmentVariable("PROCESS_BI_SQLITE_PATH");
     if (!string.IsNullOrWhiteSpace(environmentPath)) return environmentPath;
     if (!File.Exists(sourceSettingsPath)) return null;
     var settings = JsonSerializer.Deserialize<DataSourceSettings>(File.ReadAllText(sourceSettingsPath), options);
     return settings?.Provider?.Equals("sqlite", StringComparison.OrdinalIgnoreCase) == true ? settings.FilePath : null;
 }
+
+DatabaseClient CreateClient(DataSourceDefinition source) => new(source.Provider.ToLowerInvariant() switch
+{
+    "sqlite" => DatabaseProvider.Sqlite,
+    "sqlserver" => DatabaseProvider.SqlServer,
+    "oracle" => DatabaseProvider.Oracle,
+    _ => throw new InvalidOperationException("不支持的数据源类型。")
+}, source.ConnectionString);
 
 static string? ReadText(System.Data.Common.DbDataReader reader, string column) =>
     reader[column] is DBNull ? null : Convert.ToString(reader[column]);
@@ -239,6 +251,20 @@ app.MapGet("/api/reports/capacity", (DateOnly? startDate, DateOnly? endDate) =>
 });
 
 app.MapGet("/api/report-definitions", () => Results.Ok(definitions.GetAll()));
+app.MapGet("/api/data-sources", () => Results.Ok(dataSources.GetAll()));
+app.MapPost("/api/data-sources", (DataSourceDefinition source) =>
+{
+    if (string.IsNullOrWhiteSpace(source.Name) || string.IsNullOrWhiteSpace(source.ConnectionString)) return Results.BadRequest(new { message = "请填写数据源名称和连接信息。" });
+    if (source.Provider.ToLowerInvariant() is not ("sqlite" or "sqlserver" or "oracle")) return Results.BadRequest(new { message = "请选择 SQLite、SQL Server 或 Oracle。" });
+    dataSources.Save(source with { Id = string.IsNullOrWhiteSpace(source.Id) ? Guid.NewGuid().ToString("N") : source.Id }); return Results.Ok(source);
+});
+app.MapPost("/api/data-sources/{id}/test", async (string id) =>
+{
+    var source = dataSources.GetAll().FirstOrDefault(x => x.Id == id); if (source is null) return Results.NotFound();
+    try { var sql = source.Provider.Equals("oracle", StringComparison.OrdinalIgnoreCase) ? "SELECT 1 FROM DUAL" : "SELECT 1"; await CreateClient(source).ScalarAsync<int>(sql); return Results.Ok(new { message = "连接成功。" }); }
+    catch (Exception ex) { return Results.BadRequest(new { message = $"连接失败：{ex.Message}" }); }
+});
+app.MapPost("/api/data-sources/{id}/activate", (string id) => dataSources.Activate(id) ? Results.Ok(new { message = "已设为当前数据源。" }) : Results.NotFound());
 app.MapPost("/api/report-definitions/validate-sql", async (SqlValidationRequest request) =>
 {
     var sql = request.SqlText?.Trim() ?? string.Empty;
@@ -364,9 +390,37 @@ public sealed record ReportDefinition(
     bool EnableCsvExport = true,
     List<DashboardWidget>? DashboardWidgets = null);
 
-public sealed record DashboardWidget(string Id, string Type, string Title, string? XField = null, string? YField = null, int Width = 6);
+public sealed record DashboardWidget(
+    string Id,
+    string Type,
+    string Title,
+    string? XField = null,
+    string? YField = null,
+    int Width = 6,
+    string Color = "blue",
+    bool ShowLegend = true,
+    bool ShowLabel = false,
+    int Height = 300);
 
 public sealed record SqlValidationRequest(string? SqlText);
+public sealed record DataSourceDefinition(string Id, string Name, string Provider, string ConnectionString, bool Active = false);
+
+public sealed class DataSourceStore(string path, string legacyPath, JsonSerializerOptions options)
+{
+    private readonly object sync = new();
+    public List<DataSourceDefinition> GetAll() { lock (sync) return Read(); }
+    public DataSourceDefinition? GetActive() { lock (sync) return Read().FirstOrDefault(x => x.Active); }
+    public void Save(DataSourceDefinition source) { lock (sync) { var all = Read(); var i = all.FindIndex(x => x.Id == source.Id); if (i >= 0) all[i] = source; else all.Add(source); Write(all); } }
+    public bool Activate(string id) { lock (sync) { var all = Read(); if (!all.Any(x => x.Id == id)) return false; Write(all.Select(x => x with { Active = x.Id == id }).ToList()); return true; } }
+    private List<DataSourceDefinition> Read()
+    {
+        if (File.Exists(path)) return JsonSerializer.Deserialize<List<DataSourceDefinition>>(File.ReadAllText(path), options) ?? [];
+        if (!File.Exists(legacyPath)) return [];
+        var legacy = JsonSerializer.Deserialize<DataSourceSettings>(File.ReadAllText(legacyPath), options);
+        return legacy is null ? [] : [new("sqlite-local", "本地 SQLite", legacy.Provider, $"Data Source={legacy.FilePath}", true)];
+    }
+    private void Write(List<DataSourceDefinition> all) { Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path, JsonSerializer.Serialize(all, new JsonSerializerOptions(options) { WriteIndented = true })); }
+}
 
 public sealed class ReportDefinitionStore(string path, JsonSerializerOptions options)
 {

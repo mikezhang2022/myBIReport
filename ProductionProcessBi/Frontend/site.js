@@ -96,17 +96,17 @@ function renderDashboard(widgets, result) {
     const width = Math.min(12, Math.max(3, Number(widget.width) || 6));
     if (widget.type === 'metric') { const sum = widget.yField ? values(widget.yField).reduce((a,b)=>a+b,0) : rows.length; return `<article class="dashboard-widget" style="--widget-width:${width}"><h3>${safe(widget.title || '指标')}</h3><div class="metric-value">${safe(sum)}</div></article>`; }
     const series = values(widget.yField || columns[1]); const max = Math.max(...series, 1);
-    if (widget.type === 'line' || widget.type === 'bar') return `<article class="dashboard-widget" style="--widget-width:${width}"><h3>${safe(widget.title || (widget.type==='line'?'折线图':'柱状图'))}</h3><div id="chart-${safe(widget.id)}" class="chart-host"></div></article>`;
+    if (['line','bar','area','pie'].includes(widget.type)) return `<article class="dashboard-widget" style="--widget-width:${width}"><h3>${safe(widget.title || '图表')}</h3><div id="chart-${safe(widget.id)}" class="chart-host" style="height:${Math.max(180,Number(widget.height)||300)}px"></div></article>`;
     return '';
   }).join('');
   renderEcharts(list, rows, columns);
 }
 function renderEcharts(widgets, rows, columns) {
   if (!window.echarts) return;
-  widgets.filter(widget => widget.type === 'line' || widget.type === 'bar').forEach(widget => {
+  widgets.filter(widget => ['line','bar','area','pie'].includes(widget.type)).forEach(widget => {
     const host = document.querySelector(`#chart-${CSS.escape(widget.id)}`); if (!host) return;
     const x = widget.xField || columns[0], y = widget.yField || columns[1];
-    const chart = echarts.init(host); chart.setOption({ tooltip:{trigger:'axis'}, grid:{left:55,right:25,top:35,bottom:55}, xAxis:{type:'category',name:x,data:rows.map(row=>String(row[x]??'')),axisLabel:{rotate:rows.length>6?35:0}}, yAxis:{type:'value',name:y}, series:[{name:widget.title||y,type:widget.type,data:rows.map(row=>Number(row[y])||0),smooth:widget.type==='line',showSymbol:true}] }); requestAnimationFrame(()=>chart.resize());
+    const colors={blue:'#2563eb',green:'#16a34a',orange:'#ea580c',purple:'#7c3aed'},color=colors[widget.color]||colors.blue,labels=rows.map(row=>String(row[x]??'')),values=rows.map(row=>Number(row[y])||0);const pie=widget.type==='pie';const series=pie?{name:widget.title||y,type:'pie',radius:'62%',data:labels.map((name,i)=>({name,value:values[i]})),label:{show:widget.showLabel===true}}:{name:widget.title||y,type:widget.type==='area'?'line':widget.type,data:values,smooth:widget.type==='line'||widget.type==='area',showSymbol:true,areaStyle:widget.type==='area'?{opacity:.25}:undefined,label:{show:widget.showLabel===true}};const chart = echarts.init(host); chart.setOption({ color:[color], tooltip:{trigger:pie?'item':'axis'}, legend:{show:widget.showLegend!==false,bottom:0}, grid:pie?undefined:{left:55,right:25,top:35,bottom:55}, xAxis:pie?undefined:{type:'category',name:x,data:labels,axisLabel:{rotate:labels.length>6?35:0}}, yAxis:pie?undefined:{type:'value',name:y}, series:[series] }); requestAnimationFrame(()=>chart.resize());
   });
 }
 function renderNavigation() {
