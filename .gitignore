@@ -1,0 +1,8 @@
+**/bin/
+**/obj/
+*.user
+*.suo
+.vs/
+ProductionProcessBi/data/data-source.json
+ProductionProcessBi/data/process-records.json
+ProductionProcessBi/data/report-definitions.json

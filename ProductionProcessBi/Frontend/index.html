@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>产品追溯报表</title>
+  <link rel="stylesheet" href="/site.css">
+  <style>
+    #standard-query { display:block; }
+    #standard-query fieldset { margin:0; padding:16px; border:0; min-width:0; }
+    #standard-query legend { padding:0 5px; font-weight:700; color:#344054; }
+    #standard-query .standard-inputs { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
+    #standard-query label { display:grid; gap:7px; min-width:0; }
+    #standard-query label input { width:100%; }
+    #standard-query button { display:block; width:90px; margin:16px 16px 0; }
+    .landing-page { min-height:100vh; display:grid; place-content:center; justify-items:center; gap:12px; background:linear-gradient(145deg,#142b4c,#2563eb); color:white; text-align:center; }
+    .landing-page h1 { margin:8px 0 0; font-size:36px; }.landing-page p { margin:0; opacity:.76; letter-spacing:.08em; }
+    .landing-logo { width:82px; height:82px; display:grid; place-items:center; border:2px solid rgba(255,255,255,.65); border-radius:22px; font-size:42px; font-weight:800; }
+    .landing-page button { margin-top:22px; padding:11px 22px; border:0; border-radius:6px; background:white; color:#1d4ed8; font:700 15px inherit; cursor:pointer; }
+    body.report-entered .landing-page { display:none; }.shell { display:none; } body.report-entered .shell { display:grid; }
+    .export-button { padding:7px 10px; border:1px solid #b9c2d0; border-radius:5px; background:white; color:#344054; font:inherit; font-weight:700; cursor:pointer; }
+    .compact-table th,.compact-table td { padding:6px 8px; font-size:12px; }
+    .dashboard-grid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:16px; margin-bottom:18px; }.dashboard-widget { grid-column:span var(--widget-width,6); background:white; border:1px solid #e4e7ec; border-radius:8px; padding:16px; min-width:0; }.dashboard-widget h3 { margin:0 0 12px; font-size:14px; color:#475467; }.metric-value { font-size:30px; font-weight:750; color:#172b4d; }.bar-chart { height:170px; display:flex; gap:8px; align-items:end; padding-top:10px; border-bottom:1px solid #d0d5dd; }.bar-chart i { flex:1; min-width:12px; background:#3b82f6; border-radius:4px 4px 0 0; }.line-chart { width:100%; height:170px; }.line-chart polyline { fill:none; stroke:#2563eb; stroke-width:3; stroke-linejoin:round; stroke-linecap:round; }@media(max-width:850px){.dashboard-widget{grid-column:span 12;}}
+    @media (max-width:850px) { #standard-query .standard-inputs { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+  <section id="landing-page" class="landing-page" aria-label="报表中心入口"><div class="landing-logo">R</div><h1>报表中心</h1><p>Production Process BI</p><button id="enter-report-center" type="button">进入报表中心</button></section>
+  <div class="shell">
+    <aside class="sidebar" aria-label="报表中心导航">
+      <div class="brand"><span class="brand-label">报表中心</span><button id="sidebar-toggle" class="sidebar-toggle" type="button" aria-label="收起左侧报表目录" title="收起左侧报表目录">‹</button></div>
+      <nav id="report-navigation" aria-label="报表目录">
+        <p class="navigation-loading">正在载入报表目录…</p>
+      </nav>
+      <p class="sidebar-note">报表按业务分类管理</p>
+    </aside>
+
+    <main>
+      <header>
+        <div>
+          <p id="breadcrumb" class="eyebrow"><button id="main-sidebar-toggle" class="main-sidebar-toggle" type="button" aria-label="展开左侧报表目录" title="展开左侧报表目录" hidden>☰</button><span id="breadcrumb-text">生产 / 产品追溯报表</span></p>
+          <h1 id="report-title">产品追溯报表</h1>
+          <p id="report-subtitle" class="subtitle">输入 SN，查询产品的完整流程记录。</p>
+        </div>
+        <p class="note">当前数据源：Oracle 查询导出样本</p>
+      </header>
+
+      <section id="product-trace-view" class="report-view">
+        <section class="query-card" aria-label="查询条件">
+          <label for="sn-input">SN</label>
+          <input id="sn-input" type="search" placeholder="请输入产品 SN，例如 9JFYU26812000014" autocomplete="off">
+          <button id="query-button" type="button">查询</button>
+        </section>
+        <p id="message" class="message">请输入 SN 后点击“查询”。</p>
+
+        <section id="report" hidden>
+          <article>
+            <h2>产品信息</h2>
+            <div id="product-info" class="product-info"></div>
+          </article>
+          <article class="records-card">
+            <div class="section-head"><div><h2>流程记录</h2><p id="record-count" class="caption"></p></div><button id="export-product-trace" class="export-button" type="button">导出 CSV</button></div>
+            <div class="table-scroll"><table id="records-table"></table></div>
+          </article>
+        </section>
+      </section>
+
+      <section id="capacity-view" class="report-view" hidden>
+        <section class="query-card capacity-query" aria-label="查询条件">
+          <label for="start-date">日期</label>
+          <input id="start-date" type="date" aria-label="开始日期">
+          <span class="date-separator">至</span>
+          <input id="end-date" type="date" aria-label="结束日期">
+          <button id="capacity-query-button" type="button">查询</button>
+        </section>
+        <p id="capacity-message" class="message">请选择日期范围后查询。</p>
+        <section id="capacity-report" hidden>
+          <article>
+            <h2>产能汇总</h2>
+            <p class="caption">当前按实际流程数据统计；计划目标和工时数据尚未接入。</p>
+            <div id="capacity-summary" class="product-info"></div>
+          </article>
+          <article class="records-card">
+            <div class="section-head"><div><h2>每日产能明细</h2><p id="capacity-count" class="caption"></p></div><button id="export-capacity" class="export-button" type="button">导出 CSV</button></div>
+            <div class="table-scroll"><table id="capacity-table"></table></div>
+          </article>
+        </section>
+      </section>
+
+      <section id="standard-view" class="report-view" hidden>
+        <section id="standard-query" class="query-card" aria-label="查询条件"></section>
+        <p id="standard-message" class="message">请填写查询条件后点击“查询”。</p>
+        <section id="standard-report" hidden><div id="dashboard-widgets" class="dashboard-grid"></div><article class="records-card"><div class="section-head"><div><h2>查询结果</h2><p id="standard-count" class="caption"></p></div><button id="export-standard" class="export-button" type="button">导出 CSV</button></div><div class="table-scroll"><table id="standard-table"></table></div></article></section>
+      </section>
+
+    </main>
+  </div>
+  <script src="/site.js"></script>
+</body>
+</html>
