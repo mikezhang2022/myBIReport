@@ -69,7 +69,7 @@ function openStandard(definition) {
   const container = document.querySelector('#standard-query');
   const inferred = [...(definition.sqlText || '').matchAll(/[@:]([A-Za-z_][A-Za-z0-9_]*)/g)].map(match => match[1]);
   const conditions = definition.conditions?.length ? definition.conditions : [...new Set(inferred)];
-  container.innerHTML = `<fieldset><legend>查询条件</legend><div class="standard-inputs">${conditions.map(name => `<label>${safe(name)}<input data-standard-param="${safe(name)}" type="search" placeholder="请输入 ${safe(name)}"></label>`).join('')}</div></fieldset><button id="standard-query-button" type="button">查询</button>`;
+  container.innerHTML = `<fieldset><legend>查询条件</legend><div class="standard-inputs">${conditions.map(name => { const isDate=/date|time|日期|时间/i.test(name); return `<label>${safe(name)}<input data-standard-param="${safe(name)}" type="${isDate?'date':'search'}" placeholder="请输入 ${safe(name)}"></label>`; }).join('')}</div></fieldset><button id="standard-query-button" type="button">查询</button>`;
   document.querySelector('#standard-query-button').addEventListener('click', () => queryStandard(definition));
 }
 async function queryStandard(definition) {
@@ -81,10 +81,10 @@ async function queryStandard(definition) {
     const response = await fetch(apiUrl(`/api/reports/${encodeURIComponent(definition.id)}/query?${query}`));
     const body = await response.json(); if (!response.ok) throw new Error(body.message || '查询失败。');
     standardResult = body;
-    renderDashboard(definition.dashboardWidgets, body);
     document.querySelector('#standard-table').innerHTML = `<thead><tr>${body.columns.map(x => `<th>${safe(x)}</th>`).join('')}</tr></thead><tbody>${body.rows.map(row => `<tr>${body.columns.map(x => `<td>${safe(row[x] ?? '—')}</td>`).join('')}</tr>`).join('')}</tbody>`;
     document.querySelector('#standard-count').textContent = `共 ${body.rows.length} 条记录`;
     report.hidden = false; message.textContent = '查询完成。';
+    requestAnimationFrame(() => requestAnimationFrame(() => renderDashboard(definition.dashboardWidgets, body)));
   } catch (error) { report.hidden = true; message.textContent = error.message; }
 }
 function renderDashboard(widgets, result) {
@@ -96,10 +96,18 @@ function renderDashboard(widgets, result) {
     const width = Math.min(12, Math.max(3, Number(widget.width) || 6));
     if (widget.type === 'metric') { const sum = widget.yField ? values(widget.yField).reduce((a,b)=>a+b,0) : rows.length; return `<article class="dashboard-widget" style="--widget-width:${width}"><h3>${safe(widget.title || '指标')}</h3><div class="metric-value">${safe(sum)}</div></article>`; }
     const series = values(widget.yField || columns[1]); const max = Math.max(...series, 1);
-    if (widget.type === 'line') { const points = series.map((v,i)=>`${series.length<2?0:i/(series.length-1)*100},${100-v/max*90}`).join(' '); return `<article class="dashboard-widget" style="--widget-width:${width}"><h3>${safe(widget.title || '折线图')}</h3><svg class="line-chart" viewBox="0 0 100 100" preserveAspectRatio="none"><polyline points="${points}"/></svg></article>`; }
-    if (widget.type === 'bar') return `<article class="dashboard-widget" style="--widget-width:${width}"><h3>${safe(widget.title || '柱状图')}</h3><div class="bar-chart">${series.slice(0,20).map(v=>`<i style="height:${Math.max(3,v/max*100)}%"></i>`).join('')}</div></article>`;
+    if (widget.type === 'line' || widget.type === 'bar') return `<article class="dashboard-widget" style="--widget-width:${width}"><h3>${safe(widget.title || (widget.type==='line'?'折线图':'柱状图'))}</h3><div id="chart-${safe(widget.id)}" class="chart-host"></div></article>`;
     return '';
   }).join('');
+  renderEcharts(list, rows, columns);
+}
+function renderEcharts(widgets, rows, columns) {
+  if (!window.echarts) return;
+  widgets.filter(widget => widget.type === 'line' || widget.type === 'bar').forEach(widget => {
+    const host = document.querySelector(`#chart-${CSS.escape(widget.id)}`); if (!host) return;
+    const x = widget.xField || columns[0], y = widget.yField || columns[1];
+    const chart = echarts.init(host); chart.setOption({ tooltip:{trigger:'axis'}, grid:{left:55,right:25,top:35,bottom:55}, xAxis:{type:'category',name:x,data:rows.map(row=>String(row[x]??'')),axisLabel:{rotate:rows.length>6?35:0}}, yAxis:{type:'value',name:y}, series:[{name:widget.title||y,type:widget.type,data:rows.map(row=>Number(row[y])||0),smooth:widget.type==='line',showSymbol:true}] }); requestAnimationFrame(()=>chart.resize());
+  });
 }
 function renderNavigation() {
   const groups = reportDefinitions.filter(item => item.enabled).reduce((all, item) => {
