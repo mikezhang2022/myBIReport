@@ -289,6 +289,36 @@ app.MapPost("/api/report-definitions/validate-sql", async (SqlValidationRequest 
         return Results.BadRequest(new { message = $"SQL 校验失败：{ex.Message}" });
     }
 });
+app.MapPost("/api/report-definitions/preview-sql", async (SqlPreviewRequest request) =>
+{
+    var sql = request.SqlText?.Trim() ?? string.Empty;
+    if (!IsReadOnlySelect(sql)) return Results.BadRequest(new { message = "只允许试运行单条只读 SELECT 查询。" });
+    var source = dataSources.GetActive();
+    if (source is null) return Results.BadRequest(new { message = "请先在数据源管理中设置当前数据源。" });
+
+    var parameterNames = System.Text.RegularExpressions.Regex.Matches(sql, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
+        .Select(match => match.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    var parameters = parameterNames.ToDictionary(name => name, name => (object?)(request.Parameters?.GetValueOrDefault(name) ?? string.Empty), StringComparer.OrdinalIgnoreCase);
+    parameters["__biPageLimit"] = 50;
+    parameters["__biPageOffset"] = 0;
+    var client = CreateClient(source);
+    var previewSql = BuildPagedSql(sql, client.Provider);
+    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+    try
+    {
+        var columns = await client.GetColumnsAsync(previewSql, parameters, timeout.Token);
+        var rows = await client.QueryAsync(previewSql, reader =>
+        {
+            var row = new Dictionary<string, object?>();
+            foreach (var column in columns) row[column] = reader[column] is DBNull ? null : reader[column];
+            return row;
+        }, parameters, timeout.Token);
+        return Results.Ok(new { message = $"试运行完成，返回 {rows.Count} 条（最多 50 条）。", columns, rows });
+    }
+    catch (OperationCanceledException) { return Results.BadRequest(new { message = "试运行超时（10 秒），请收紧查询条件或优化 SQL。" }); }
+    catch (Exception ex) { return Results.BadRequest(new { message = $"试运行失败：{ex.Message}" }); }
+});
 app.MapPost("/api/report-definitions", (ReportDefinition definition) =>
 {
     var validation = ValidateDefinition(definition);
@@ -471,6 +501,7 @@ public sealed record DashboardWidget(
     int Height = 300);
 
 public sealed record SqlValidationRequest(string? SqlText);
+public sealed record SqlPreviewRequest(string? SqlText, Dictionary<string, string>? Parameters);
 public sealed record DataSourceDefinition(string Id, string Name, string Provider, string ConnectionString, bool Active = false);
 
 public sealed class DataSourceStore(string path, string legacyPath, JsonSerializerOptions options)
