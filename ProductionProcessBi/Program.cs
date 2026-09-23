@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Globalization;
+using System.Diagnostics;
 using BiDataAccess;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -298,7 +299,8 @@ app.MapPost("/api/report-definitions/preview-sql", async (SqlPreviewRequest requ
 
     var parameterNames = System.Text.RegularExpressions.Regex.Matches(sql, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
         .Select(match => match.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-    var parameters = parameterNames.ToDictionary(name => name, name => (object?)(request.Parameters?.GetValueOrDefault(name) ?? string.Empty), StringComparer.OrdinalIgnoreCase);
+    var previewParameters = parameterNames.ToDictionary(name => name, name => (object?)(request.Parameters?.GetValueOrDefault(name) ?? string.Empty), StringComparer.OrdinalIgnoreCase);
+    var parameters = new Dictionary<string, object?>(previewParameters, StringComparer.OrdinalIgnoreCase);
     parameters["__biPageLimit"] = 50;
     parameters["__biPageOffset"] = 0;
     var client = CreateClient(source);
@@ -307,6 +309,7 @@ app.MapPost("/api/report-definitions/preview-sql", async (SqlPreviewRequest requ
 
     try
     {
+        var stopwatch = Stopwatch.StartNew();
         var columns = await client.GetColumnsAsync(previewSql, parameters, timeout.Token);
         var rows = await client.QueryAsync(previewSql, reader =>
         {
@@ -314,7 +317,12 @@ app.MapPost("/api/report-definitions/preview-sql", async (SqlPreviewRequest requ
             foreach (var column in columns) row[column] = reader[column] is DBNull ? null : reader[column];
             return row;
         }, parameters, timeout.Token);
-        return Results.Ok(new { message = $"试运行完成，返回 {rows.Count} 条（最多 50 条）。", columns, rows });
+        stopwatch.Stop();
+        IReadOnlyList<string> plan = [];
+        string? planMessage = null;
+        try { plan = await client.ExplainAsync(sql, previewParameters, timeout.Token); }
+        catch (Exception ex) { planMessage = $"无法读取执行计划：{ex.Message}"; }
+        return Results.Ok(new { message = $"试运行完成，返回 {rows.Count} 条（最多 50 条）。", elapsedMs = stopwatch.ElapsedMilliseconds, columns, rows, plan, planMessage });
     }
     catch (OperationCanceledException) { return Results.BadRequest(new { message = "试运行超时（10 秒），请收紧查询条件或优化 SQL。" }); }
     catch (Exception ex) { return Results.BadRequest(new { message = $"试运行失败：{ex.Message}" }); }
@@ -359,12 +367,17 @@ app.MapGet("/api/reports/{id}/query", async (string id, HttpRequest request) =>
     var page = int.TryParse(request.Query["page"], out var requestedPage) ? Math.Max(1, requestedPage) : 1;
     var pageSize = int.TryParse(request.Query["pageSize"], out var requestedSize) ? Math.Clamp(requestedSize, 1, 100) : 50;
     var parameters = names.ToDictionary(name => name, name => (object?)(request.Query[name].FirstOrDefault() ?? string.Empty), StringComparer.OrdinalIgnoreCase);
+    var countParameters = new Dictionary<string, object?>(parameters, StringComparer.OrdinalIgnoreCase);
     // 多取一行只用于判断是否存在下一页，任何一次查询最多从数据库读 101 行。
     parameters["__biPageLimit"] = pageSize + 1;
     parameters["__biPageOffset"] = checked((page - 1) * pageSize);
     var client = CreateClient(source);
     var pagedSql = BuildPagedSql(executableSql, client.Provider);
     var columns = await client.GetColumnsAsync(pagedSql, parameters);
+    long totalRows;
+    try { totalRows = await client.ScalarAsync<long>(BuildCountSql(executableSql, client.Provider), countParameters); }
+    catch (Exception ex) { return Results.BadRequest(new { message = $"统计总记录数失败：{ex.Message}" }); }
+    var totalPages = Math.Max(1, (totalRows + pageSize - 1) / pageSize);
     var visible = definition.DisplayFields.Where(columns.Contains).ToArray();
     if (visible.Length == 0) visible = columns.ToArray();
     var rows = await client.QueryAsync(pagedSql, reader =>
@@ -375,7 +388,7 @@ app.MapGet("/api/reports/{id}/query", async (string id, HttpRequest request) =>
     }, parameters);
     var hasMore = rows.Count > pageSize;
     if (hasMore) rows = rows.Take(pageSize).ToList();
-    return Results.Ok(new { columns = visible, rows, page, pageSize, hasMore });
+    return Results.Ok(new { columns = visible, rows, page, pageSize, hasMore, totalRows, totalPages });
 });
 app.MapGet("/api/reports/{id}/filter-options/{name}", async (string id, string name) =>
 {
@@ -427,6 +440,35 @@ static string BuildPagedSql(string sql, DatabaseProvider provider)
         DatabaseProvider.Oracle => $"{sql}{orderBy} OFFSET @__biPageOffset ROWS FETCH NEXT @__biPageLimit ROWS ONLY",
         _ => throw new InvalidOperationException("不支持的数据源类型。")
     };
+}
+
+static string BuildCountSql(string sql, DatabaseProvider provider)
+{
+    var body = RemoveOuterOrderBy(sql);
+    return provider == DatabaseProvider.Oracle
+        ? $"SELECT COUNT(1) FROM ({body}) bi_count"
+        : $"SELECT COUNT(1) FROM ({body}) AS bi_count";
+}
+
+static string RemoveOuterOrderBy(string sql)
+{
+    var depth = 0;
+    var quoted = false;
+    var orderByIndex = -1;
+    for (var index = 0; index < sql.Length; index++)
+    {
+        if (sql[index] == '\'') quoted = !quoted;
+        if (quoted) continue;
+        if (sql[index] == '(') depth++;
+        else if (sql[index] == ')') depth = Math.Max(0, depth - 1);
+        else if (depth == 0 && index + 8 <= sql.Length && sql.AsSpan(index).StartsWith("ORDER BY", StringComparison.OrdinalIgnoreCase))
+        {
+            var before = index == 0 || char.IsWhiteSpace(sql[index - 1]);
+            var after = index + 8 == sql.Length || char.IsWhiteSpace(sql[index + 8]);
+            if (before && after) orderByIndex = index;
+        }
+    }
+    return orderByIndex >= 0 ? sql[..orderByIndex].TrimEnd() : sql;
 }
 
 static string? ValidateDefinition(ReportDefinition definition)

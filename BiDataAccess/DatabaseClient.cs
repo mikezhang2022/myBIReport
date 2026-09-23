@@ -82,6 +82,51 @@ public sealed class DatabaseClient
         return Enumerable.Range(0, reader.FieldCount).Select(reader.GetName).ToArray();
     }
 
+    public async Task<IReadOnlyList<string>> ExplainAsync(
+        string sql,
+        IReadOnlyDictionary<string, object?>? parameters = null,
+        CancellationToken cancellationToken = default)
+    {
+        await using var connection = await OpenConnectionAsync(cancellationToken);
+        if (Provider == DatabaseProvider.Sqlite)
+        {
+            await using var command = CreateCommand(connection, $"EXPLAIN QUERY PLAN {sql}", parameters);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            var lines = new List<string>();
+            while (await reader.ReadAsync(cancellationToken))
+                lines.Add(string.Join(" | ", Enumerable.Range(0, reader.FieldCount).Select(i => Convert.ToString(reader.GetValue(i)))));
+            return lines;
+        }
+
+        if (Provider == DatabaseProvider.Oracle)
+        {
+            await using (var explain = CreateCommand(connection, $"EXPLAIN PLAN FOR {sql}", parameters))
+                await explain.ExecuteNonQueryAsync(cancellationToken);
+            await using var display = CreateCommand(connection, "SELECT PLAN_TABLE_OUTPUT FROM TABLE(DBMS_XPLAN.DISPLAY())", null);
+            await using var reader = await display.ExecuteReaderAsync(cancellationToken);
+            var lines = new List<string>();
+            while (await reader.ReadAsync(cancellationToken)) lines.Add(Convert.ToString(reader.GetValue(0)) ?? string.Empty);
+            return lines;
+        }
+
+        await using (var enable = CreateCommand(connection, "SET SHOWPLAN_TEXT ON", null))
+            await enable.ExecuteNonQueryAsync(cancellationToken);
+        try
+        {
+            await using var command = CreateCommand(connection, sql, parameters);
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            var lines = new List<string>();
+            while (await reader.ReadAsync(cancellationToken))
+                lines.Add(string.Join(" | ", Enumerable.Range(0, reader.FieldCount).Select(i => Convert.ToString(reader.GetValue(i)))));
+            return lines;
+        }
+        finally
+        {
+            await using var disable = CreateCommand(connection, "SET SHOWPLAN_TEXT OFF", null);
+            await disable.ExecuteNonQueryAsync(CancellationToken.None);
+        }
+    }
+
     public async Task<TResult> InTransactionAsync<TResult>(
         Func<DbConnection, DbTransaction, Task<TResult>> action,
         CancellationToken cancellationToken = default)
