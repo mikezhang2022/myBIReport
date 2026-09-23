@@ -121,7 +121,9 @@ public sealed class DatabaseClient
             throw new ArgumentException("SQL is required.", nameof(sql));
 
         var command = connection.CreateCommand();
-        command.CommandText = sql;
+        command.CommandText = Provider == DatabaseProvider.Oracle
+            ? System.Text.RegularExpressions.Regex.Replace(sql, "@([A-Za-z_][A-Za-z0-9_]*)", ":$1")
+            : sql;
         command.CommandType = CommandType.Text;
 
         if (parameters is null) return command;
