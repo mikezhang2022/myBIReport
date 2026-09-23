@@ -57,7 +57,7 @@ function showView(viewId, title, breadcrumb, subtitle) {
 }
 function openDefinition(definition) {
   selectedDefinitionId = definition.id;
-  if (definition.queryType === 'standard') { openStandard(definition); renderNavigation(); return; }
+  if (definition.sqlText || definition.queryType === 'standard') { openStandard(definition); renderNavigation(); return; }
   showView(`${definition.queryType}-view`, definition.name, `${definition.category} / ${definition.name}`, definition.queryType === 'capacity' ? '按日期范围查询实际过站与完成情况。' : '输入 SN，查询产品的完整流程记录。');
   if (definition.queryType === 'capacity') queryCapacity();
   renderNavigation();
