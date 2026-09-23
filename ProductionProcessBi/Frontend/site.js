@@ -1,4 +1,4 @@
-const API_BASE = window.PROCESS_BI_API_BASE ?? 'http://127.0.0.1:5095';
+const API_BASE = window.PROCESS_BI_API_BASE ?? `${window.location.protocol}//${window.location.hostname}:5095`;
 const apiUrl = (path) => `${API_BASE}${path}`;
 const get = (url) => fetch(apiUrl(url)).then(r => r.ok ? r.json() : Promise.reject(r.status));
 const dateTime = new Intl.DateTimeFormat('zh-CN', { dateStyle:'short', timeStyle:'short', hour12:false });

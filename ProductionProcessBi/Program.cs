@@ -4,7 +4,7 @@ using BiDataAccess;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
-    .SetIsOriginAllowed(origin => Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.IsLoopback)
+    .SetIsOriginAllowed(origin => Uri.TryCreate(origin, UriKind.Absolute, out var uri) && (uri.IsLoopback || uri.Host.StartsWith("10.") || uri.Host.StartsWith("192.168.") || uri.Host.StartsWith("172.16.") || uri.Host.StartsWith("172.17.") || uri.Host.StartsWith("172.18.") || uri.Host.StartsWith("172.19.") || uri.Host.StartsWith("172.2") || uri.Host.StartsWith("172.30.") || uri.Host.StartsWith("172.31.")))
     .AllowAnyHeader()
     .AllowAnyMethod()));
 var app = builder.Build();
