@@ -336,6 +336,18 @@ app.MapGet("/api/reports/{id}/query", async (string id, HttpRequest request) =>
     }, parameters);
     return Results.Ok(new { columns = visible, rows });
 });
+app.MapGet("/api/reports/{id}/filter-options/{name}", async (string id, string name) =>
+{
+    var filter = definitions.GetAll().FirstOrDefault(x => x.Id.Equals(id, StringComparison.OrdinalIgnoreCase))?.Filters?.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+    if (filter?.ControlType != "select" || !IsReadOnlySelect(filter.OptionsSql)) return Results.NotFound();
+    var source = dataSources.GetActive(); if (source is null) return Results.BadRequest(new { message = "请先设置当前数据源。" });
+    try
+    {
+        var rows = await CreateClient(source).QueryAsync(filter.OptionsSql!, reader => new { value = reader.IsDBNull(0) ? "" : Convert.ToString(reader.GetValue(0)), label = reader.FieldCount > 1 && !reader.IsDBNull(1) ? Convert.ToString(reader.GetValue(1)) : Convert.ToString(reader.GetValue(0)) });
+        return Results.Ok(rows);
+    }
+    catch (Exception ex) { return Results.BadRequest(new { message = $"读取下拉选项失败：{ex.Message}" }); }
+});
 
 app.Run();
 
@@ -390,7 +402,10 @@ public sealed record ReportDefinition(
     string SqlText = "",
     string ReportStyle = "standard",
     bool EnableCsvExport = true,
-    List<DashboardWidget>? DashboardWidgets = null);
+    List<DashboardWidget>? DashboardWidgets = null,
+    List<ReportFilter>? Filters = null);
+
+public sealed record ReportFilter(string Name, string Label, string ControlType = "text", string? OptionsSql = null);
 
 public sealed record DashboardWidget(
     string Id,

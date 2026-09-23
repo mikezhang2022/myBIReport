@@ -69,7 +69,9 @@ function openStandard(definition) {
   const container = document.querySelector('#standard-query');
   const inferred = [...(definition.sqlText || '').matchAll(/[@:]([A-Za-z_][A-Za-z0-9_]*)/g)].map(match => match[1]);
   const conditions = definition.conditions?.length ? definition.conditions : [...new Set(inferred)];
-  container.innerHTML = `<fieldset><legend>查询条件</legend><div class="standard-inputs">${conditions.map(name => { const isDate=/date|time|日期|时间/i.test(name); return `<label>${safe(name)}<input data-standard-param="${safe(name)}" type="${isDate?'date':'search'}" placeholder="请输入 ${safe(name)}"></label>`; }).join('')}</div></fieldset><button id="standard-query-button" type="button">查询</button>`;
+  const filters = Object.fromEntries((definition.filters || []).map(filter => [filter.name, filter]));
+  container.innerHTML = `<fieldset><legend>查询条件</legend><div class="standard-inputs">${conditions.map(name => { const filter=filters[name], type=filter?.controlType || (/date|time|日期|时间/i.test(name)?'date':'text'), label=filter?.label||name; return `<label>${safe(label)}${type==='select'?`<select data-standard-param="${safe(name)}"><option value="">请选择</option></select>`:`<input data-standard-param="${safe(name)}" type="${type==='date'?'date':'search'}" placeholder="请输入 ${safe(label)}">`}</label>`; }).join('')}</div></fieldset><button id="standard-query-button" type="button">查询</button>`;
+  (definition.filters||[]).filter(filter=>filter.controlType==='select'&&filter.optionsSql).forEach(async filter=>{const select=container.querySelector(`[data-standard-param="${filter.name}"]`);try{const options=await fetch(apiUrl(`/api/reports/${encodeURIComponent(definition.id)}/filter-options/${encodeURIComponent(filter.name)}`)).then(r=>r.json());select.innerHTML='<option value="">请选择</option>'+options.map(item=>`<option value="${safe(item.value)}">${safe(item.label)}</option>`).join('');}catch{select.innerHTML='<option value="">选项加载失败</option>';}});
   document.querySelector('#standard-query-button').addEventListener('click', () => queryStandard(definition));
 }
 async function queryStandard(definition) {
@@ -183,5 +185,6 @@ function setSidebarCollapsed(collapsed) {
 }
 sidebarToggle.addEventListener('click', () => setSidebarCollapsed(true));
 mainSidebarToggle.addEventListener('click', () => setSidebarCollapsed(false));
+if (window.matchMedia('(max-width:850px)').matches) setSidebarCollapsed(true);
 
 loadDefinitions().catch(() => { navigation.innerHTML = '<p class="navigation-loading">无法加载报表配置。</p>'; });
