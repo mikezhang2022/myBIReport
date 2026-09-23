@@ -271,17 +271,17 @@ app.MapPost("/api/report-definitions/validate-sql", async (SqlValidationRequest 
 {
     var sql = request.SqlText?.Trim() ?? string.Empty;
     if (!IsReadOnlySelect(sql)) return Results.BadRequest(new { message = "只允许编写单条 SELECT 查询，不允许包含分号或数据修改语句。" });
-    var sqlitePath = ReadSqlitePath();
-    if (string.IsNullOrWhiteSpace(sqlitePath) || !File.Exists(sqlitePath))
-        return Results.BadRequest(new { message = "当前未配置可用的 SQLite 数据源。" });
+    var source = dataSources.GetActive();
+    if (source is null)
+        return Results.BadRequest(new { message = "请先在数据源管理中设置当前数据源。" });
 
     try
     {
-        var client = new DatabaseClient(DatabaseProvider.Sqlite, $"Data Source={sqlitePath};Mode=ReadOnly;");
+        var client = CreateClient(source);
         var parameterNames = System.Text.RegularExpressions.Regex.Matches(sql, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
             .Select(match => match.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var parameters = parameterNames.ToDictionary(name => name, name => (object?)string.Empty, StringComparer.OrdinalIgnoreCase);
-        var columns = await client.GetColumnsAsync($"SELECT * FROM ({sql}) AS report_preview LIMIT 0", parameters);
+        var columns = await client.GetColumnsAsync(sql, parameters);
         return Results.Ok(new { message = "SQL 校验通过。", columns, parameters = parameterNames });
     }
     catch (Exception ex)
@@ -319,13 +319,13 @@ app.MapGet("/api/reports/{id}/query", async (string id, HttpRequest request) =>
     var definition = definitions.GetAll().FirstOrDefault(x => x.Id.Equals(id, StringComparison.OrdinalIgnoreCase) && x.Enabled);
     if (definition is null) return Results.NotFound(new { message = "未找到可用报表。" });
     if (!IsReadOnlySelect(definition.SqlText)) return Results.BadRequest(new { message = "报表 SQL 无效。" });
-    var sqlitePath = ReadSqlitePath();
-    if (string.IsNullOrWhiteSpace(sqlitePath) || !File.Exists(sqlitePath)) return Results.BadRequest(new { message = "当前未配置可用的数据源。" });
+    var source = dataSources.GetActive();
+    if (source is null) return Results.BadRequest(new { message = "请先在数据源管理中设置当前数据源。" });
     var names = System.Text.RegularExpressions.Regex.Matches(definition.SqlText, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
         .Select(x => x.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     var parameters = names.ToDictionary(name => name, name => (object?)(request.Query[name].FirstOrDefault() ?? string.Empty), StringComparer.OrdinalIgnoreCase);
-    var client = new DatabaseClient(DatabaseProvider.Sqlite, $"Data Source={sqlitePath};Mode=ReadOnly;");
-    var columns = await client.GetColumnsAsync($"SELECT * FROM ({definition.SqlText}) AS report_result LIMIT 0", parameters);
+    var client = CreateClient(source);
+    var columns = await client.GetColumnsAsync(definition.SqlText, parameters);
     var visible = definition.DisplayFields.Where(columns.Contains).ToArray();
     if (visible.Length == 0) visible = columns.ToArray();
     var rows = await client.QueryAsync(definition.SqlText, reader =>
