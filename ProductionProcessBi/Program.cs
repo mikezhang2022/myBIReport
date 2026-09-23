@@ -326,18 +326,26 @@ app.MapGet("/api/reports/{id}/query", async (string id, HttpRequest request) =>
     var executableSql = RemoveEmptyOptionalConditions(definition.SqlText, request.Query);
     var names = System.Text.RegularExpressions.Regex.Matches(executableSql, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
         .Select(x => x.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    var page = int.TryParse(request.Query["page"], out var requestedPage) ? Math.Max(1, requestedPage) : 1;
+    var pageSize = int.TryParse(request.Query["pageSize"], out var requestedSize) ? Math.Clamp(requestedSize, 1, 100) : 50;
     var parameters = names.ToDictionary(name => name, name => (object?)(request.Query[name].FirstOrDefault() ?? string.Empty), StringComparer.OrdinalIgnoreCase);
+    // 多取一行只用于判断是否存在下一页，任何一次查询最多从数据库读 101 行。
+    parameters["__biPageLimit"] = pageSize + 1;
+    parameters["__biPageOffset"] = checked((page - 1) * pageSize);
     var client = CreateClient(source);
-    var columns = await client.GetColumnsAsync(executableSql, parameters);
+    var pagedSql = BuildPagedSql(executableSql, client.Provider);
+    var columns = await client.GetColumnsAsync(pagedSql, parameters);
     var visible = definition.DisplayFields.Where(columns.Contains).ToArray();
     if (visible.Length == 0) visible = columns.ToArray();
-    var rows = await client.QueryAsync(executableSql, reader =>
+    var rows = await client.QueryAsync(pagedSql, reader =>
     {
         var row = new Dictionary<string, object?>();
         foreach (var column in visible) row[column] = reader[column] is DBNull ? null : reader[column];
         return row;
     }, parameters);
-    return Results.Ok(new { columns = visible, rows });
+    var hasMore = rows.Count > pageSize;
+    if (hasMore) rows = rows.Take(pageSize).ToList();
+    return Results.Ok(new { columns = visible, rows, page, pageSize, hasMore });
 });
 app.MapGet("/api/reports/{id}/filter-options/{name}", async (string id, string name) =>
 {
@@ -378,6 +386,19 @@ static string RemoveEmptyOptionalConditions(string sql, IQueryCollection query)
     return System.Text.RegularExpressions.Regex.Replace(sql, @"(?is)\bWHERE\s*(?=(ORDER\s+BY|GROUP\s+BY|HAVING|FETCH|OFFSET|UNION)\b|$)", "WHERE 1=1 ");
 }
 
+static string BuildPagedSql(string sql, DatabaseProvider provider)
+{
+    var orderBy = System.Text.RegularExpressions.Regex.IsMatch(sql, @"\bORDER\s+BY\b", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+        ? string.Empty : " ORDER BY (SELECT NULL)";
+    return provider switch
+    {
+        DatabaseProvider.Sqlite => $"{sql} LIMIT @__biPageLimit OFFSET @__biPageOffset",
+        DatabaseProvider.SqlServer => $"{sql}{orderBy} OFFSET @__biPageOffset ROWS FETCH NEXT @__biPageLimit ROWS ONLY",
+        DatabaseProvider.Oracle => $"{sql}{orderBy} OFFSET @__biPageOffset ROWS FETCH NEXT @__biPageLimit ROWS ONLY",
+        _ => throw new InvalidOperationException("不支持的数据源类型。")
+    };
+}
+
 static string? ValidateDefinition(ReportDefinition definition)
 {
     if (string.IsNullOrWhiteSpace(definition.Id) || !System.Text.RegularExpressions.Regex.IsMatch(definition.Id, "^[a-z0-9-]+$"))
@@ -393,10 +414,13 @@ static string? ValidateDefinition(ReportDefinition definition)
 
 static bool IsReadOnlySelect(string? sql)
 {
-    if (string.IsNullOrWhiteSpace(sql) || sql.Contains(';')) return false;
+    if (string.IsNullOrWhiteSpace(sql) || sql.Contains(';') || sql.Contains("--") || sql.Contains("/*") || sql.Contains("*/")) return false;
     var normalized = sql.TrimStart();
-    return normalized.StartsWith("select", StringComparison.OrdinalIgnoreCase)
-        || normalized.StartsWith("with", StringComparison.OrdinalIgnoreCase);
+    if (!(normalized.StartsWith("select", StringComparison.OrdinalIgnoreCase) || normalized.StartsWith("with", StringComparison.OrdinalIgnoreCase))) return false;
+
+    // 管理端 SQL 也只允许真正的只读查询；数据库账号仍应配置为只读账号，形成第二道保护。
+    const string prohibited = @"\b(insert|update|delete|merge|create|alter|drop|truncate|grant|revoke|execute|exec|call|declare|begin|commit|rollback|vacuum|attach|detach|pragma|into|for\s+update)\b";
+    return !System.Text.RegularExpressions.Regex.IsMatch(normalized, prohibited, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 }
 
 public sealed record ProcessRecord(

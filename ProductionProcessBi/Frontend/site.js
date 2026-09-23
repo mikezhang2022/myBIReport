@@ -8,7 +8,7 @@ const button = document.querySelector('#query-button');
 const message = document.querySelector('#message');
 const report = document.querySelector('#report');
 const safe = (value) => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-let productTraceResult = null, capacityResult = null, standardResult = null;
+let productTraceResult = null, capacityResult = null, standardResult = null, standardQueryState = null;
 function exportCsv(filename, columns, rows) { const quote = value => `"${String(value ?? '').replaceAll('"', '""')}"`; const csv = '\ufeff' + [columns.map(column => quote(column.label)).join(','), ...rows.map(row => columns.map(column => quote(row[column.key])).join(','))].join('\r\n'); const url = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'})); const link = document.createElement('a'); link.href=url; link.download=`${filename}.csv`; link.click(); URL.revokeObjectURL(url); }
 
 function flag(value, cls = '') { return value ? `<span class="flag ${cls}">${value}</span>` : '—'; }
@@ -72,19 +72,24 @@ function openStandard(definition) {
   const filters = Object.fromEntries((definition.filters || []).map(filter => [filter.name, filter]));
   container.innerHTML = `<fieldset><legend>查询条件</legend><div class="standard-inputs">${conditions.map(name => { const filter=filters[name], type=filter?.controlType || (/date|time|日期|时间/i.test(name)?'date':'text'), label=filter?.label||name; return `<label>${safe(label)}${type==='select'?`<select data-standard-param="${safe(name)}"><option value="">请选择</option></select>`:`<input data-standard-param="${safe(name)}" type="${type==='date'?'date':'search'}" placeholder="请输入 ${safe(label)}">`}</label>`; }).join('')}</div></fieldset><button id="standard-query-button" type="button">查询</button>`;
   (definition.filters||[]).filter(filter=>filter.controlType==='select'&&filter.optionsSql).forEach(async filter=>{const select=container.querySelector(`[data-standard-param="${filter.name}"]`);try{const options=await fetch(apiUrl(`/api/reports/${encodeURIComponent(definition.id)}/filter-options/${encodeURIComponent(filter.name)}`)).then(r=>r.json());select.innerHTML='<option value="">请选择</option>'+options.map(item=>`<option value="${safe(item.value)}">${safe(item.label)}</option>`).join('');}catch{select.innerHTML='<option value="">选项加载失败</option>';}});
-  document.querySelector('#standard-query-button').addEventListener('click', () => queryStandard(definition));
+  document.querySelector('#standard-query-button').addEventListener('click', () => queryStandard(definition, 1));
 }
-async function queryStandard(definition) {
+async function queryStandard(definition, page = 1) {
   const message = document.querySelector('#standard-message'), report = document.querySelector('#standard-report');
   const query = new URLSearchParams();
   document.querySelectorAll('[data-standard-param]').forEach(input => query.set(input.dataset.standardParam, input.value));
+  query.set('page', page); query.set('pageSize', 50);
   message.textContent = '查询中…';
   try {
     const response = await fetch(apiUrl(`/api/reports/${encodeURIComponent(definition.id)}/query?${query}`));
     const body = await response.json(); if (!response.ok) throw new Error(body.message || '查询失败。');
     standardResult = body;
+    standardQueryState = { definition, page: body.page, hasMore: body.hasMore };
     document.querySelector('#standard-table').innerHTML = `<thead><tr>${body.columns.map(x => `<th>${safe(x)}</th>`).join('')}</tr></thead><tbody>${body.rows.map(row => `<tr>${body.columns.map(x => `<td>${safe(row[x] ?? '—')}</td>`).join('')}</tr>`).join('')}</tbody>`;
-    document.querySelector('#standard-count').textContent = `共 ${body.rows.length} 条记录`;
+    document.querySelector('#standard-count').textContent = `第 ${body.page} 页，每页最多 ${body.pageSize} 条`;
+    const pager = document.querySelector('#standard-pagination');
+    pager.innerHTML = `<button type="button" data-standard-page="${body.page - 1}" ${body.page <= 1 ? 'disabled' : ''}>上一页</button><span>第 ${body.page} 页</span><button type="button" data-standard-page="${body.page + 1}" ${body.hasMore ? '' : 'disabled'}>下一页</button>`;
+    pager.querySelectorAll('[data-standard-page]').forEach(button => button.addEventListener('click', () => queryStandard(definition, Number(button.dataset.standardPage))));
     report.hidden = false; message.textContent = '查询完成。';
     requestAnimationFrame(() => requestAnimationFrame(() => renderDashboard(definition.dashboardWidgets, body)));
   } catch (error) { report.hidden = true; message.textContent = error.message; }
