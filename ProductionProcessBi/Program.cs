@@ -256,7 +256,9 @@ app.MapPost("/api/data-sources", (DataSourceDefinition source) =>
 {
     if (string.IsNullOrWhiteSpace(source.Name) || string.IsNullOrWhiteSpace(source.ConnectionString)) return Results.BadRequest(new { message = "请填写数据源名称和连接信息。" });
     if (source.Provider.ToLowerInvariant() is not ("sqlite" or "sqlserver" or "oracle")) return Results.BadRequest(new { message = "请选择 SQLite、SQL Server 或 Oracle。" });
-    dataSources.Save(source with { Id = string.IsNullOrWhiteSpace(source.Id) ? Guid.NewGuid().ToString("N") : source.Id }); return Results.Ok(source);
+    var saved = source with { Id = string.IsNullOrWhiteSpace(source.Id) ? Guid.NewGuid().ToString("N") : source.Id, ConnectionString = source.ConnectionString.Trim() };
+    dataSources.Save(saved);
+    return Results.Ok(saved);
 });
 app.MapPost("/api/data-sources/{id}/test", async (string id) =>
 {
