@@ -321,14 +321,17 @@ app.MapGet("/api/reports/{id}/query", async (string id, HttpRequest request) =>
     if (!IsReadOnlySelect(definition.SqlText)) return Results.BadRequest(new { message = "报表 SQL 无效。" });
     var source = dataSources.GetActive();
     if (source is null) return Results.BadRequest(new { message = "请先在数据源管理中设置当前数据源。" });
-    var names = System.Text.RegularExpressions.Regex.Matches(definition.SqlText, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
+    // 查询条件是可选的：空值对应的 AND 条件会从 SQL 中移除，而不是按空字符串过滤。
+    // 例如：WHERE t.ERROR_FLAG = @errorFlag AND t.PRO_SN = @sn，未传 errorFlag 时只保留 SN 条件。
+    var executableSql = RemoveEmptyOptionalConditions(definition.SqlText, request.Query);
+    var names = System.Text.RegularExpressions.Regex.Matches(executableSql, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
         .Select(x => x.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     var parameters = names.ToDictionary(name => name, name => (object?)(request.Query[name].FirstOrDefault() ?? string.Empty), StringComparer.OrdinalIgnoreCase);
     var client = CreateClient(source);
-    var columns = await client.GetColumnsAsync(definition.SqlText, parameters);
+    var columns = await client.GetColumnsAsync(executableSql, parameters);
     var visible = definition.DisplayFields.Where(columns.Contains).ToArray();
     if (visible.Length == 0) visible = columns.ToArray();
-    var rows = await client.QueryAsync(definition.SqlText, reader =>
+    var rows = await client.QueryAsync(executableSql, reader =>
     {
         var row = new Dictionary<string, object?>();
         foreach (var column in visible) row[column] = reader[column] is DBNull ? null : reader[column];
@@ -350,6 +353,30 @@ app.MapGet("/api/reports/{id}/filter-options/{name}", async (string id, string n
 });
 
 app.Run();
+
+static string RemoveEmptyOptionalConditions(string sql, IQueryCollection query)
+{
+    var parameterNames = System.Text.RegularExpressions.Regex.Matches(sql, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
+        .Select(x => x.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase);
+    const string boundary = @"\s+(?:AND|OR|ORDER\s+BY|GROUP\s+BY|HAVING|FETCH|OFFSET|UNION)\b";
+
+    foreach (var name in parameterNames)
+    {
+        if (!string.IsNullOrWhiteSpace(query[name].FirstOrDefault())) continue;
+
+        var parameter = @"[@:]" + System.Text.RegularExpressions.Regex.Escape(name) + @"\b";
+        // 先处理 WHERE 后的第一段条件；这样用户不必额外手写 "WHERE 1=1"。
+        var firstCondition = @"(?is)\bWHERE\s+(?:(?!" + boundary + @").)*?" + parameter + @"(?:(?!" + boundary + @").)*?(?=" + boundary + @"|$)";
+        sql = System.Text.RegularExpressions.Regex.Replace(sql, firstCondition, "WHERE ");
+
+        // 再处理普通的 AND 条件。只删除包含该空参数的一整段条件，不影响其余条件。
+        var andCondition = @"(?is)\s+AND\s+(?:(?!" + boundary + @").)*?" + parameter + @"(?:(?!" + boundary + @").)*?(?=" + boundary + @"|$)";
+        sql = System.Text.RegularExpressions.Regex.Replace(sql, andCondition, string.Empty);
+    }
+
+    // 所有条件都未填写时，保留一个合法的恒真 WHERE，仍可执行报表 SQL。
+    return System.Text.RegularExpressions.Regex.Replace(sql, @"(?is)\bWHERE\s*(?=(ORDER\s+BY|GROUP\s+BY|HAVING|FETCH|OFFSET|UNION)\b|$)", "WHERE 1=1 ");
+}
 
 static string? ValidateDefinition(ReportDefinition definition)
 {
