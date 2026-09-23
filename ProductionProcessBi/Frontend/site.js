@@ -89,7 +89,7 @@ async function queryStandard(definition) {
 }
 function renderDashboard(widgets, result) {
   const rows = result.rows || [], columns = result.columns || [];
-  const list = widgets?.length ? widgets : [{id:'metric',type:'metric',title:'结果记录数',width:3},{id:'bar',type:'bar',title:'数据分布',xField:columns[0],yField:columns[1],width:9}];
+  const list = widgets?.length ? widgets : [];
   const values = field => rows.map(row => Number(row[field]) || 0);
   const holder = document.querySelector('#dashboard-widgets');
   holder.innerHTML = list.map(widget => {
