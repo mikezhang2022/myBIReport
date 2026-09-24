@@ -322,7 +322,8 @@ app.MapPost("/api/report-definitions/preview-sql", async (SqlPreviewRequest requ
         string? planMessage = null;
         try { plan = await client.ExplainAsync(sql, previewParameters, timeout.Token); }
         catch (Exception ex) { planMessage = $"无法读取执行计划：{ex.Message}"; }
-        return Results.Ok(new { message = $"试运行完成，返回 {rows.Count} 条（最多 50 条）。", elapsedMs = stopwatch.ElapsedMilliseconds, columns, rows, plan, planMessage });
+        var bindings = parameters.Select(pair => new { name = pair.Key, value = Convert.ToString(pair.Value) ?? string.Empty });
+        return Results.Ok(new { message = $"试运行完成，返回 {rows.Count} 条（最多 50 条）。", elapsedMs = stopwatch.ElapsedMilliseconds, columns, rows, plan, planMessage, executedSql = client.PrepareSql(previewSql), bindings });
     }
     catch (OperationCanceledException) { return Results.BadRequest(new { message = "试运行超时（10 秒），请收紧查询条件或优化 SQL。" }); }
     catch (Exception ex) { return Results.BadRequest(new { message = $"试运行失败：{ex.Message}" }); }
