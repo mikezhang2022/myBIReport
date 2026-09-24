@@ -172,6 +172,9 @@ public sealed class DatabaseClient
         var command = connection.CreateCommand();
         command.CommandText = PrepareSql(sql);
         command.CommandType = CommandType.Text;
+        // Oracle 默认可能按参数出现顺序绑定。分页 SQL 会重复使用分页参数，必须按名称绑定，
+        // 否则 :sn、:item_genre 等业务参数会发生错位，表现为不报错但返回空数据。
+        if (command is OracleCommand oracleCommand) oracleCommand.BindByName = true;
 
         if (parameters is null) return command;
         foreach (var (name, value) in parameters)
