@@ -310,7 +310,7 @@ app.MapPost("/api/report-definitions/preview-sql", async (SqlPreviewRequest requ
     try
     {
         var stopwatch = Stopwatch.StartNew();
-        var columns = await client.GetColumnsAsync(previewSql, parameters, timeout.Token);
+        var columns = (await client.GetColumnsAsync(previewSql, parameters, timeout.Token)).Where(column => !column.Equals("__bi_rownum", StringComparison.OrdinalIgnoreCase)).ToArray();
         var rows = await client.QueryAsync(previewSql, reader =>
         {
             var row = new Dictionary<string, object?>();
@@ -373,7 +373,7 @@ app.MapGet("/api/reports/{id}/query", async (string id, HttpRequest request) =>
     parameters["__biPageOffset"] = checked((page - 1) * pageSize);
     var client = CreateClient(source);
     var pagedSql = BuildPagedSql(executableSql, client.Provider);
-    var columns = await client.GetColumnsAsync(pagedSql, parameters);
+    var columns = (await client.GetColumnsAsync(pagedSql, parameters)).Where(column => !column.Equals("__bi_rownum", StringComparison.OrdinalIgnoreCase)).ToArray();
     long totalRows;
     try { totalRows = await client.ScalarAsync<long>(BuildCountSql(executableSql, client.Provider), countParameters); }
     catch (Exception ex) { return Results.BadRequest(new { message = $"统计总记录数失败：{ex.Message}" }); }
@@ -437,7 +437,8 @@ static string BuildPagedSql(string sql, DatabaseProvider provider)
     {
         DatabaseProvider.Sqlite => $"{sql} LIMIT @__biPageLimit OFFSET @__biPageOffset",
         DatabaseProvider.SqlServer => $"{sql}{orderBy} OFFSET @__biPageOffset ROWS FETCH NEXT @__biPageLimit ROWS ONLY",
-        DatabaseProvider.Oracle => $"{sql}{orderBy} OFFSET @__biPageOffset ROWS FETCH NEXT @__biPageLimit ROWS ONLY",
+        // Oracle 11g 及部分兼容模式不支持 OFFSET / FETCH；ROWNUM 可兼容旧版本。
+        DatabaseProvider.Oracle => $"SELECT * FROM (SELECT bi_inner.*, ROWNUM AS __bi_rownum FROM ({sql}) bi_inner WHERE ROWNUM <= @__biPageOffset + @__biPageLimit) WHERE __bi_rownum > @__biPageOffset",
         _ => throw new InvalidOperationException("不支持的数据源类型。")
     };
 }
