@@ -301,8 +301,8 @@ app.MapPost("/api/report-definitions/preview-sql", async (SqlPreviewRequest requ
         .Select(match => match.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     var previewParameters = parameterNames.ToDictionary(name => name, name => (object?)(request.Parameters?.GetValueOrDefault(name) ?? string.Empty), StringComparer.OrdinalIgnoreCase);
     var parameters = new Dictionary<string, object?>(previewParameters, StringComparer.OrdinalIgnoreCase);
-    parameters["__biPageLimit"] = 50;
-    parameters["__biPageOffset"] = 0;
+    parameters["biPageLimit"] = 50;
+    parameters["biPageOffset"] = 0;
     var client = CreateClient(source);
     var previewSql = BuildPagedSql(sql, client.Provider);
     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
@@ -310,7 +310,7 @@ app.MapPost("/api/report-definitions/preview-sql", async (SqlPreviewRequest requ
     try
     {
         var stopwatch = Stopwatch.StartNew();
-        var columns = (await client.GetColumnsAsync(previewSql, parameters, timeout.Token)).Where(column => !column.Equals("__bi_rownum", StringComparison.OrdinalIgnoreCase)).ToArray();
+        var columns = (await client.GetColumnsAsync(previewSql, parameters, timeout.Token)).Where(column => !column.Equals("bi_rownum", StringComparison.OrdinalIgnoreCase)).ToArray();
         var rows = await client.QueryAsync(previewSql, reader =>
         {
             var row = new Dictionary<string, object?>();
@@ -369,11 +369,11 @@ app.MapGet("/api/reports/{id}/query", async (string id, HttpRequest request) =>
     var parameters = names.ToDictionary(name => name, name => (object?)(request.Query[name].FirstOrDefault() ?? string.Empty), StringComparer.OrdinalIgnoreCase);
     var countParameters = new Dictionary<string, object?>(parameters, StringComparer.OrdinalIgnoreCase);
     // 多取一行只用于判断是否存在下一页，任何一次查询最多从数据库读 101 行。
-    parameters["__biPageLimit"] = pageSize + 1;
-    parameters["__biPageOffset"] = checked((page - 1) * pageSize);
+    parameters["biPageLimit"] = pageSize + 1;
+    parameters["biPageOffset"] = checked((page - 1) * pageSize);
     var client = CreateClient(source);
     var pagedSql = BuildPagedSql(executableSql, client.Provider);
-    var columns = (await client.GetColumnsAsync(pagedSql, parameters)).Where(column => !column.Equals("__bi_rownum", StringComparison.OrdinalIgnoreCase)).ToArray();
+    var columns = (await client.GetColumnsAsync(pagedSql, parameters)).Where(column => !column.Equals("bi_rownum", StringComparison.OrdinalIgnoreCase)).ToArray();
     long totalRows;
     try { totalRows = await client.ScalarAsync<long>(BuildCountSql(executableSql, client.Provider), countParameters); }
     catch (Exception ex) { return Results.BadRequest(new { message = $"统计总记录数失败：{ex.Message}" }); }
@@ -435,10 +435,10 @@ static string BuildPagedSql(string sql, DatabaseProvider provider)
         ? string.Empty : " ORDER BY (SELECT NULL)";
     return provider switch
     {
-        DatabaseProvider.Sqlite => $"{sql} LIMIT @__biPageLimit OFFSET @__biPageOffset",
-        DatabaseProvider.SqlServer => $"{sql}{orderBy} OFFSET @__biPageOffset ROWS FETCH NEXT @__biPageLimit ROWS ONLY",
+        DatabaseProvider.Sqlite => $"{sql} LIMIT @biPageLimit OFFSET @biPageOffset",
+        DatabaseProvider.SqlServer => $"{sql}{orderBy} OFFSET @biPageOffset ROWS FETCH NEXT @biPageLimit ROWS ONLY",
         // Oracle 11g 及部分兼容模式不支持 OFFSET / FETCH；ROWNUM 可兼容旧版本。
-        DatabaseProvider.Oracle => $"SELECT * FROM (SELECT bi_inner.*, ROWNUM AS __bi_rownum FROM ({sql}) bi_inner WHERE ROWNUM <= @__biPageOffset + @__biPageLimit) WHERE __bi_rownum > @__biPageOffset",
+        DatabaseProvider.Oracle => $"SELECT * FROM (SELECT bi_inner.*, ROWNUM AS bi_rownum FROM ({sql}) bi_inner WHERE ROWNUM <= @biPageOffset + @biPageLimit) WHERE bi_rownum > @biPageOffset",
         _ => throw new InvalidOperationException("不支持的数据源类型。")
     };
 }
