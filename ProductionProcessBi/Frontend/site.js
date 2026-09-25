@@ -7,58 +7,6 @@ const input = document.querySelector('#sn-input');
 const button = document.querySelector('#query-button');
 const message = document.querySelector('#message');
 const report = document.querySelector('#report');
-const scannerDialog = document.querySelector('#scanner-dialog');
-const scannerVideo = document.querySelector('#scanner-video');
-const scannerMessage = document.querySelector('#scanner-message');
-let scannerControls = null;
-let scannerTarget = input;
-let scannerResultMessage = message;
-
-function closeScanner() {
-  try { scannerControls?.stop(); } catch { /* camera may already be stopped */ }
-  scannerControls = null;
-  const stream = scannerVideo.srcObject;
-  if (stream) stream.getTracks().forEach(track => track.stop());
-  scannerVideo.srcObject = null;
-  scannerDialog.hidden = true;
-}
-
-async function openScanner(target = input, resultMessage = message) {
-  scannerTarget = target;
-  scannerResultMessage = resultMessage;
-  if (!window.isSecureContext && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
-    message.textContent = '扫码需要 HTTPS 安全连接；请使用 HTTPS 地址访问报表中心。';
-    return;
-  }
-  if (!navigator.mediaDevices?.getUserMedia) {
-    message.textContent = '当前浏览器不支持调用摄像头，请改用新版 Chrome、Edge 或 Safari。';
-    return;
-  }
-  scannerDialog.hidden = false;
-  scannerMessage.textContent = '正在打开后置摄像头…';
-  try {
-    if (!window.ZXingBrowser?.BrowserMultiFormatReader) throw new Error('扫码组件尚未加载。请检查网络后重试。');
-    const reader = new window.ZXingBrowser.BrowserMultiFormatReader();
-    scannerControls = await reader.decodeFromConstraints({ video: { facingMode: { ideal: 'environment' } }, audio: false }, scannerVideo, (result) => {
-      if (!result) return;
-      const scannedValue = result.getText().trim();
-      if (!scannedValue) return;
-      scannerTarget.value = scannedValue;
-      closeScanner();
-      scannerResultMessage.textContent = `已识别：${scannedValue}。请确认后点击“查询”。`;
-      scannerTarget.focus();
-    });
-    scannerMessage.textContent = '摄像头已打开，正在识别…';
-  } catch (error) {
-    closeScanner();
-    const detail = error?.name === 'NotAllowedError' ? '未获得摄像头权限，请在浏览器地址栏允许使用摄像头。' : (error?.message || '无法打开摄像头。');
-    message.textContent = `扫码不可用：${detail}`;
-  }
-}
-document.querySelector('#scan-sn-button').addEventListener('click', () => openScanner(input));
-document.querySelector('#close-scanner').addEventListener('click', closeScanner);
-scannerDialog.addEventListener('click', event => { if (event.target === scannerDialog) closeScanner(); });
-window.addEventListener('pagehide', closeScanner);
 const safe = (value) => String(value ?? '—').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 let productTraceResult = null, capacityResult = null, standardResult = null, standardQueryState = null;
 function exportCsv(filename, columns, rows) { const quote = value => `"${String(value ?? '').replaceAll('"', '""')}"`; const csv = '\ufeff' + [columns.map(column => quote(column.label)).join(','), ...rows.map(row => columns.map(column => quote(row[column.key])).join(','))].join('\r\n'); const url = URL.createObjectURL(new Blob([csv], {type:'text/csv;charset=utf-8'})); const link = document.createElement('a'); link.href=url; link.download=`${filename}.csv`; link.click(); URL.revokeObjectURL(url); }
@@ -122,9 +70,8 @@ function openStandard(definition) {
   const inferred = [...(definition.sqlText || '').matchAll(/[@:]([A-Za-z_][A-Za-z0-9_]*)/g)].map(match => match[1]);
   const conditions = definition.conditions?.length ? definition.conditions : [...new Set(inferred)];
   const filters = Object.fromEntries((definition.filters || []).map(filter => [filter.name, filter]));
-  container.innerHTML = `<fieldset><legend>查询条件</legend><div class="standard-inputs">${conditions.map(name => { const filter=filters[name], type=filter?.controlType || (/date|time|日期|时间/i.test(name)?'date':'text'), label=filter?.label||name, scannable=type!=='select' && /(^|[_-])(sn|serial|barcode)([_-]|$)|序列号|条码/i.test(name); const control=type==='select'?`<select data-standard-param="${safe(name)}"><option value="">请选择</option></select>`:`<input data-standard-param="${safe(name)}" type="${type==='date'?'date':'search'}" placeholder="请输入 ${safe(label)}">`; return `<label>${safe(label)}${scannable?`<div class="scan-input-wrap">${control}<button class="scan-button" type="button" data-scan-standard="${safe(name)}" title="扫描条码或二维码">⌁ 扫码</button></div>`:control}</label>`; }).join('')}</div></fieldset><button id="standard-query-button" type="button">查询</button>`;
+  container.innerHTML = `<fieldset><legend>查询条件</legend><div class="standard-inputs">${conditions.map(name => { const filter=filters[name], type=filter?.controlType || (/date|time|日期|时间/i.test(name)?'date':'text'), label=filter?.label||name; return `<label>${safe(label)}${type==='select'?`<select data-standard-param="${safe(name)}"><option value="">请选择</option></select>`:`<input data-standard-param="${safe(name)}" type="${type==='date'?'date':'search'}" placeholder="请输入 ${safe(label)}">`}</label>`; }).join('')}</div></fieldset><button id="standard-query-button" type="button">查询</button>`;
   (definition.filters||[]).filter(filter=>filter.controlType==='select'&&(filter.optionsSql||filter.hasOptionsSql)).forEach(async filter=>{const select=container.querySelector(`[data-standard-param="${filter.name}"]`);try{const response=await fetch(apiUrl(`/api/reports/${encodeURIComponent(definition.id)}/filter-options/${encodeURIComponent(filter.name)}`));if(!response.ok)throw new Error();const options=await response.json();select.innerHTML='<option value="">请选择</option>'+options.map(item=>`<option value="${safe(item.value)}">${safe(item.label)}</option>`).join('');}catch{select.innerHTML='<option value="">选项加载失败</option>';}});
-  container.querySelectorAll('[data-scan-standard]').forEach(button => button.addEventListener('click', () => openScanner(container.querySelector(`[data-standard-param="${CSS.escape(button.dataset.scanStandard)}"]`), document.querySelector('#standard-message'))));
   document.querySelector('#standard-query-button').addEventListener('click', () => queryStandard(definition, 1));
 }
 async function queryStandard(definition, page = 1) {
