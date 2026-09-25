@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using System.Globalization;
 using Microsoft.Data.SqlClient;
 using Microsoft.Data.Sqlite;
 using Oracle.ManagedDataAccess.Client;
@@ -55,7 +56,14 @@ public sealed class DatabaseClient
         await using var connection = await OpenConnectionAsync(cancellationToken);
         await using var command = CreateCommand(connection, sql, parameters);
         var value = await command.ExecuteScalarAsync(cancellationToken);
-        return value is null or DBNull ? default : (T)Convert.ChangeType(value, typeof(T));
+        if (value is null or DBNull) return default;
+        if (typeof(T) == typeof(long))
+        {
+            var text = Convert.ToString(value, CultureInfo.InvariantCulture);
+            if (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var number))
+                return (T)(object)number;
+        }
+        return (T)Convert.ChangeType(value, typeof(T), CultureInfo.InvariantCulture);
     }
 
     public async Task<IReadOnlyList<T>> QueryAsync<T>(

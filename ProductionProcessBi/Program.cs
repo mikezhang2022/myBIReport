@@ -375,10 +375,6 @@ app.MapGet("/api/reports/{id}/query", async (string id, HttpRequest request) =>
     var client = CreateClient(source);
     var pagedSql = BuildPagedSql(executableSql, client.Provider);
     var columns = (await client.GetColumnsAsync(pagedSql, parameters)).Where(column => !column.Equals("bi_rownum", StringComparison.OrdinalIgnoreCase)).ToArray();
-    long totalRows;
-    try { totalRows = await client.ScalarAsync<long>(BuildCountSql(executableSql, client.Provider), countParameters); }
-    catch (Exception ex) { return Results.BadRequest(new { message = $"统计总记录数失败：{ex.Message}" }); }
-    var totalPages = Math.Max(1, (totalRows + pageSize - 1) / pageSize);
     var visible = definition.DisplayFields.Where(columns.Contains).ToArray();
     if (visible.Length == 0) visible = columns.ToArray();
     var rows = await client.QueryAsync(pagedSql, reader =>
@@ -389,7 +385,16 @@ app.MapGet("/api/reports/{id}/query", async (string id, HttpRequest request) =>
     }, parameters);
     var hasMore = rows.Count > pageSize;
     if (hasMore) rows = rows.Take(pageSize).ToList();
-    return Results.Ok(new { columns = visible, rows, page, pageSize, hasMore, totalRows, totalPages });
+    long? totalRows = null;
+    long? totalPages = null;
+    string? countMessage = null;
+    try
+    {
+        totalRows = await client.ScalarAsync<long>(BuildCountSql(executableSql, client.Provider), countParameters);
+        totalPages = Math.Max(1, (totalRows.Value + pageSize - 1) / pageSize);
+    }
+    catch (Exception ex) { countMessage = $"总记录数统计失败：{ex.Message}"; }
+    return Results.Ok(new { columns = visible, rows, page, pageSize, hasMore, totalRows, totalPages, countMessage, executedSql = client.PrepareSql(pagedSql) });
 });
 app.MapGet("/api/reports/{id}/filter-options/{name}", async (string id, string name) =>
 {

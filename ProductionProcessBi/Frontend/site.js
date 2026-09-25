@@ -84,13 +84,14 @@ async function queryStandard(definition, page = 1) {
     const response = await fetch(apiUrl(`/api/reports/${encodeURIComponent(definition.id)}/query?${query}`));
     const body = await response.json(); if (!response.ok) throw new Error(body.message || '查询失败。');
     standardResult = body;
+    const hasTotals = body.totalRows !== null && body.totalRows !== undefined && body.totalPages !== null && body.totalPages !== undefined;
     standardQueryState = { definition, page: body.page, hasMore: body.hasMore, totalPages: body.totalPages };
     document.querySelector('#standard-table').innerHTML = `<thead><tr>${body.columns.map(x => `<th>${safe(x)}</th>`).join('')}</tr></thead><tbody>${body.rows.map(row => `<tr>${body.columns.map(x => `<td>${safe(row[x] ?? '—')}</td>`).join('')}</tr>`).join('')}</tbody>`;
-    document.querySelector('#standard-count').textContent = `共 ${body.totalRows} 条，第 ${body.page} / ${body.totalPages} 页，每页 ${body.pageSize} 条`;
+    document.querySelector('#standard-count').textContent = hasTotals ? `共 ${body.totalRows} 条，第 ${body.page} / ${body.totalPages} 页，每页 ${body.pageSize} 条` : `第 ${body.page} 页，每页 ${body.pageSize} 条（总记录数暂不可用）`;
     const pager = document.querySelector('#standard-pagination');
-    pager.innerHTML = `<button type="button" data-standard-page="${body.page - 1}" ${body.page <= 1 ? 'disabled' : ''}>上一页</button><span>第 ${body.page} / ${body.totalPages} 页</span><button type="button" data-standard-page="${body.page + 1}" ${body.page < body.totalPages ? '' : 'disabled'}>下一页</button>`;
+    pager.innerHTML = `<button type="button" data-standard-page="${body.page - 1}" ${body.page <= 1 ? 'disabled' : ''}>上一页</button><span>${hasTotals ? `第 ${body.page} / ${body.totalPages} 页` : `第 ${body.page} 页`}</span><button type="button" data-standard-page="${body.page + 1}" ${hasTotals ? (body.page < body.totalPages ? '' : 'disabled') : (body.hasMore ? '' : 'disabled')}>下一页</button>`;
     pager.querySelectorAll('[data-standard-page]').forEach(button => button.addEventListener('click', () => queryStandard(definition, Number(button.dataset.standardPage))));
-    report.hidden = false; message.textContent = '查询完成。';
+    report.hidden = false; message.textContent = body.countMessage ? `查询完成。${body.countMessage}` : '查询完成。';
     requestAnimationFrame(() => requestAnimationFrame(() => renderDashboard(definition.dashboardWidgets, body)));
   } catch (error) { report.hidden = true; message.textContent = error.message; }
 }
