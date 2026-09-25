@@ -84,6 +84,7 @@ async function queryStandard(definition, page = 1) {
     const response = await fetch(apiUrl(`/api/reports/${encodeURIComponent(definition.id)}/query?${query}`));
     const body = await response.json(); if (!response.ok) throw new Error(body.message || '查询失败。');
     standardResult = body;
+    document.querySelector('#standard-ai-card').hidden = true;
     const hasTotals = body.totalRows !== null && body.totalRows !== undefined && body.totalPages !== null && body.totalPages !== undefined;
     standardQueryState = { definition, page: body.page, hasMore: body.hasMore, totalPages: body.totalPages };
     document.querySelector('#standard-table').innerHTML = `<thead><tr>${body.columns.map(x => `<th>${safe(x)}</th>`).join('')}</tr></thead><tbody>${body.rows.map(row => `<tr>${body.columns.map(x => `<td>${safe(row[x] ?? '—')}</td>`).join('')}</tr>`).join('')}</tbody>`;
@@ -94,6 +95,32 @@ async function queryStandard(definition, page = 1) {
     report.hidden = false; message.textContent = body.countMessage ? `查询完成。${body.countMessage}` : '查询完成。';
     requestAnimationFrame(() => requestAnimationFrame(() => renderDashboard(definition.dashboardWidgets, body)));
   } catch (error) { report.hidden = true; message.textContent = error.message; }
+}
+async function analyzeStandardResult() {
+  if (!standardResult || !selectedDefinitionId) return;
+  const button = document.querySelector('#analyze-standard');
+  const card = document.querySelector('#standard-ai-card');
+  const result = document.querySelector('#standard-ai-result');
+  const meta = document.querySelector('#ai-analysis-meta');
+  const conditions = {};
+  document.querySelectorAll('[data-standard-param]').forEach(field => { if (field.value) conditions[field.dataset.standardParam] = field.value; });
+  button.disabled = true; button.textContent = 'AI 正在解读…';
+  card.hidden = false;
+  result.textContent = '正在基于当前页已授权结果生成解读…';
+  meta.textContent = '';
+  try {
+    const response = await fetch(apiUrl(`/api/reports/${encodeURIComponent(selectedDefinitionId)}/ai-analysis`), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ columns: standardResult.columns, rows: standardResult.rows, conditions, totalRows: standardResult.totalRows })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.message || 'AI 解读失败。');
+    result.textContent = body.analysis;
+    meta.textContent = `${body.model || 'AI'} · ${body.rowCount || 0} 条样本`;
+  } catch (error) {
+    result.textContent = error.message;
+    meta.textContent = '未完成';
+  } finally { button.disabled = false; button.textContent = '✦ AI 解读本次结果'; }
 }
 function renderDashboard(widgets, result) {
   const rows = result.rows || [], columns = result.columns || [];
@@ -191,6 +218,7 @@ document.querySelector('#enter-report-center').addEventListener('click', () => d
 document.querySelector('#export-product-trace').addEventListener('click', () => { if (productTraceResult) exportCsv('产品追溯', [{key:'sequence',label:'序号'},{key:'process',label:'工序'},{key:'station',label:'工位'},{key:'inTime',label:'过站时间'},{key:'error',label:'异常'},{key:'ngQuantity',label:'NG数量'},{key:'scrap',label:'报废'},{key:'rework',label:'返工'}], productTraceResult.records); });
 document.querySelector('#export-capacity').addEventListener('click', () => { if (capacityResult) exportCsv('产能报表', [{key:'date',label:'日期'},{key:'passRecords',label:'过站记录'},{key:'serials',label:'参与SN'},{key:'completedSerials',label:'完成SN'},{key:'errorRecords',label:'异常记录'},{key:'ngQuantity',label:'NG数量'}], capacityResult.rows); });
 document.querySelector('#export-standard').addEventListener('click', () => { if (standardResult) exportCsv('报表查询结果', standardResult.columns.map(key => ({key,label:key})), standardResult.rows); });
+document.querySelector('#analyze-standard').addEventListener('click', analyzeStandardResult);
 
 const shell = document.querySelector('.shell');
 const sidebarToggle = document.querySelector('#sidebar-toggle');

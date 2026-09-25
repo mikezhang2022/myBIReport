@@ -11,6 +11,7 @@
 - 图表配置：可绑定 X/Y 字段，设置标题、颜色、高度、图例、数据标签；前端采用 [Apache ECharts](https://echarts.apache.org/) 渲染。
 - 多数据源管理：支持 SQLite、SQL Server、Oracle；可新增、测试连接并设为当前数据源。
 - 通用数据库访问库：封装 SQLite、SQL Server、Oracle 的参数化执行与查询。
+- AI 结果解读：对当前页已授权的报表结果生成摘要、异常信号和后续核查建议；AI 不执行 SQL。
 
 ## 项目结构
 
@@ -86,6 +87,21 @@ API 默认地址为 `http://127.0.0.1:5095`，前端与后台均可通过 `windo
 账号摘要和 Cookie 加密密钥保存在 `ProductionProcessBi/data/`，不会提交到 Git。遗失 `users.json` 会触发首次管理员创建流程；请备份本机数据目录。当前登录有效期为 8 小时。
 
 权限登录适用于本机开发和可信内网验证。通过其他电脑访问前，请先为 API 配置 HTTPS；普通 HTTP 会明文传输登录信息和报表数据，不适合在不可信网络中使用。
+
+## 配置 AI 结果解读（可选）
+
+前端查询完成后可点击“AI 解读本次结果”。系统只把当前账号已授权报表的**当前页结果**（最多 50 行、30 列）和已填写的查询条件提交给模型；AI 没有数据库连接、不能生成或执行 SQL。
+
+使用兼容 OpenAI Chat Completions 协议的模型服务时，在启动 API 的终端设置以下环境变量后重启 API：
+
+```powershell
+$env:PROCESS_BI_AI_ENDPOINT = "https://你的模型服务/v1"
+$env:PROCESS_BI_AI_MODEL = "你的模型名称"
+$env:PROCESS_BI_AI_API_KEY = "你的 API Key"
+dotnet run --urls http://127.0.0.1:5095
+```
+
+密钥只应保存在服务器环境变量或密钥管理服务中，不能填写到报表配置、浏览器页面或提交到 Git。未配置时，前端会明确提示缺少模型配置。
 
 ## 创建报表
 
