@@ -55,7 +55,7 @@
       <section id="product-trace-view" class="report-view" hidden>
         <section class="query-card" aria-label="查询条件">
           <label for="sn-input">SN</label>
-          <input id="sn-input" type="search" placeholder="请输入产品 SN，例如 9JFYU26812000014" autocomplete="off">
+          <div class="scan-input-wrap"><input id="sn-input" type="search" placeholder="请输入产品 SN，例如 9JFYU26812000014" autocomplete="off"><button id="scan-sn-button" class="scan-button" type="button" title="调用摄像头扫描一维码或二维码" aria-label="扫描条码或二维码">⌁ 扫码</button></div>
           <button id="query-button" type="button">查询</button>
         </section>
         <p id="message" class="message">请输入 SN 后点击“查询”。</p>
@@ -102,7 +102,16 @@
 
     </main>
   </div>
+  <section id="scanner-dialog" class="scanner-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="scanner-title">
+    <div class="scanner-card">
+      <div class="scanner-heading"><div><p class="eyebrow">CAMERA SCANNER</p><h2 id="scanner-title">扫描条码或二维码</h2></div><button id="close-scanner" class="scanner-close" type="button" aria-label="关闭扫码窗口">×</button></div>
+      <div class="scanner-preview"><video id="scanner-video" autoplay muted playsinline></video><div class="scanner-frame" aria-hidden="true"></div></div>
+      <p id="scanner-message" class="scanner-message">正在打开后置摄像头…</p>
+      <p class="scanner-hint">将一维条码或二维码置于取景框内。识别成功后会自动填入 SN。</p>
+    </div>
+  </section>
   <script src="/auth.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js"></script>
   <script src="/site.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 </body>
