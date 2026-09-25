@@ -71,7 +71,7 @@ function openStandard(definition) {
   const conditions = definition.conditions?.length ? definition.conditions : [...new Set(inferred)];
   const filters = Object.fromEntries((definition.filters || []).map(filter => [filter.name, filter]));
   container.innerHTML = `<fieldset><legend>查询条件</legend><div class="standard-inputs">${conditions.map(name => { const filter=filters[name], type=filter?.controlType || (/date|time|日期|时间/i.test(name)?'date':'text'), label=filter?.label||name; return `<label>${safe(label)}${type==='select'?`<select data-standard-param="${safe(name)}"><option value="">请选择</option></select>`:`<input data-standard-param="${safe(name)}" type="${type==='date'?'date':'search'}" placeholder="请输入 ${safe(label)}">`}</label>`; }).join('')}</div></fieldset><button id="standard-query-button" type="button">查询</button>`;
-  (definition.filters||[]).filter(filter=>filter.controlType==='select'&&filter.optionsSql).forEach(async filter=>{const select=container.querySelector(`[data-standard-param="${filter.name}"]`);try{const options=await fetch(apiUrl(`/api/reports/${encodeURIComponent(definition.id)}/filter-options/${encodeURIComponent(filter.name)}`)).then(r=>r.json());select.innerHTML='<option value="">请选择</option>'+options.map(item=>`<option value="${safe(item.value)}">${safe(item.label)}</option>`).join('');}catch{select.innerHTML='<option value="">选项加载失败</option>';}});
+  (definition.filters||[]).filter(filter=>filter.controlType==='select'&&(filter.optionsSql||filter.hasOptionsSql)).forEach(async filter=>{const select=container.querySelector(`[data-standard-param="${filter.name}"]`);try{const response=await fetch(apiUrl(`/api/reports/${encodeURIComponent(definition.id)}/filter-options/${encodeURIComponent(filter.name)}`));if(!response.ok)throw new Error();const options=await response.json();select.innerHTML='<option value="">请选择</option>'+options.map(item=>`<option value="${safe(item.value)}">${safe(item.label)}</option>`).join('');}catch{select.innerHTML='<option value="">选项加载失败</option>';}});
   document.querySelector('#standard-query-button').addEventListener('click', () => queryStandard(definition, 1));
 }
 async function queryStandard(definition, page = 1) {
@@ -141,6 +141,17 @@ async function loadDefinitions() {
   reportDefinitions = await get('/api/report-definitions');
   selectedDefinitionId = reportDefinitions.some(item => item.id === currentId) ? currentId : reportDefinitions[0]?.id ?? null;
   renderNavigation();
+  const emptyState = document.querySelector('#no-reports');
+  if (!reportDefinitions.length) {
+    document.querySelectorAll('.report-view').forEach(view => view.hidden = view.id !== 'no-reports');
+    document.querySelector('#report-title').textContent = '报表中心';
+    document.querySelector('#breadcrumb-text').textContent = '报表中心';
+    document.querySelector('#report-subtitle').textContent = '当前账号可访问的已发布报表会显示在左侧目录。';
+    return;
+  }
+  if (emptyState) emptyState.hidden = true;
+  const selected = reportDefinitions.find(item => item.id === selectedDefinitionId);
+  if (selected) openDefinition(selected);
 }
 
 const startDate = document.querySelector('#start-date');

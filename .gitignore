@@ -7,3 +7,5 @@ ProductionProcessBi/data/data-source.json
 ProductionProcessBi/data/process-records.json
 ProductionProcessBi/data/report-definitions.json
 ProductionProcessBi/data/data-sources.json
+ProductionProcessBi/data/users.json
+ProductionProcessBi/data/auth-keys/
