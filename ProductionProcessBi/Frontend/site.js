@@ -48,6 +48,7 @@ input.addEventListener('keydown', event => { if (event.key === 'Enter') query();
 const navigation = document.querySelector('#report-navigation');
 let reportDefinitions = [];
 let selectedDefinitionId = null;
+let openedDefinitionIds = [];
 function escapeHtml(value) { return safe(value); }
 function showView(viewId, title, breadcrumb, subtitle) {
   document.querySelectorAll('.report-view').forEach(view => view.hidden = view.id !== viewId);
@@ -55,17 +56,50 @@ function showView(viewId, title, breadcrumb, subtitle) {
   document.querySelector('#report-title').textContent = title;
   document.querySelector('#report-subtitle').textContent = subtitle;
 }
+function showWelcome() {
+  selectedDefinitionId = null;
+  document.querySelectorAll('.report-view').forEach(view => view.hidden = view.id !== 'report-welcome');
+  document.querySelector('#breadcrumb-text').textContent = '报表中心';
+  document.querySelector('#report-title').textContent = '报表中心';
+  document.querySelector('#report-subtitle').textContent = '请从左侧目录选择要打开的报表。';
+  renderTabs();
+  renderNavigation();
+}
+function renderTabs() {
+  const tabs = document.querySelector('#report-tabs');
+  const opened = openedDefinitionIds.map(id => reportDefinitions.find(item => item.id === id)).filter(Boolean);
+  tabs.hidden = opened.length === 0;
+  tabs.innerHTML = opened.map(definition => `<button class="report-tab ${definition.id === selectedDefinitionId ? 'active' : ''}" type="button" data-tab-id="${escapeHtml(definition.id)}"><span class="report-tab-name">${escapeHtml(definition.name)}</span><span class="report-tab-close" role="button" aria-label="关闭 ${escapeHtml(definition.name)}" title="关闭">×</span></button>`).join('');
+  tabs.querySelectorAll('.report-tab').forEach(tab => tab.addEventListener('click', event => {
+    const id = tab.dataset.tabId;
+    if (event.target.closest('.report-tab-close')) { closeDefinition(id); return; }
+    const definition = reportDefinitions.find(item => item.id === id);
+    if (definition) openDefinition(definition);
+  }));
+}
+function closeDefinition(id) {
+  openedDefinitionIds = openedDefinitionIds.filter(item => item !== id);
+  if (selectedDefinitionId !== id) { renderTabs(); renderNavigation(); return; }
+  const next = reportDefinitions.find(item => item.id === openedDefinitionIds[openedDefinitionIds.length - 1]);
+  if (next) openDefinition(next); else showWelcome();
+}
 function openDefinition(definition) {
   selectedDefinitionId = definition.id;
-  if (definition.sqlText || definition.queryType === 'standard') { openStandard(definition); renderNavigation(); return; }
+  if (!openedDefinitionIds.includes(definition.id)) openedDefinitionIds.push(definition.id);
+  if (definition.sqlText || definition.queryType === 'standard') { openStandard(definition); renderTabs(); renderNavigation(); return; }
   showView(`${definition.queryType}-view`, definition.name, `${definition.category} / ${definition.name}`, definition.queryType === 'capacity' ? '按日期范围查询实际过站与完成情况。' : '输入 SN，查询产品的完整流程记录。');
-  if (definition.queryType === 'capacity') queryCapacity();
+  if (definition.queryType === 'capacity') { capacityReport.hidden = true; capacityMessage.textContent = '请选择日期范围后查询。'; }
+  if (definition.queryType === 'product-trace') { report.hidden = true; message.textContent = '请输入 SN 后点击“查询”。'; }
+  renderTabs();
   renderNavigation();
 }
 function openStandard(definition) {
   showView('standard-view', definition.name, `${definition.category} / ${definition.name}`, '按配置的查询条件读取数据。');
   document.querySelector('#export-standard').hidden = definition.enableCsvExport === false;
   document.querySelector('#standard-table').classList.toggle('compact-table', definition.reportStyle === 'compact');
+  document.querySelector('#standard-report').hidden = true;
+  document.querySelector('#standard-ai-card').hidden = true;
+  document.querySelector('#standard-message').textContent = '请填写查询条件后点击“查询”。';
   const container = document.querySelector('#standard-query');
   const inferred = [...(definition.sqlText || '').matchAll(/[@:]([A-Za-z_][A-Za-z0-9_]*)/g)].map(match => match[1]);
   const conditions = definition.conditions?.length ? definition.conditions : [...new Set(inferred)];
@@ -146,7 +180,9 @@ function renderEcharts(widgets, rows, columns) {
 }
 function renderNavigation() {
   const groups = reportDefinitions.filter(item => item.enabled).reduce((all, item) => {
-    (all[item.category] ??= []).push(item); return all;
+    // Avoid logical nullish assignment so older Chromium/Edge clients can parse this file.
+    if (!all[item.category]) all[item.category] = [];
+    all[item.category].push(item); return all;
   }, {});
   const content = Object.entries(groups).map(([category, items]) => {
     const key = category.replace(/[^\w\u4e00-\u9fff]/g, '');
@@ -166,7 +202,8 @@ function renderNavigation() {
 async function loadDefinitions() {
   const currentId = selectedDefinitionId;
   reportDefinitions = await get('/api/report-definitions');
-  selectedDefinitionId = reportDefinitions.some(item => item.id === currentId) ? currentId : reportDefinitions[0]?.id ?? null;
+  openedDefinitionIds = openedDefinitionIds.filter(id => reportDefinitions.some(item => item.id === id));
+  selectedDefinitionId = reportDefinitions.some(item => item.id === currentId) ? currentId : null;
   renderNavigation();
   const emptyState = document.querySelector('#no-reports');
   if (!reportDefinitions.length) {
@@ -174,11 +211,12 @@ async function loadDefinitions() {
     document.querySelector('#report-title').textContent = '报表中心';
     document.querySelector('#breadcrumb-text').textContent = '报表中心';
     document.querySelector('#report-subtitle').textContent = '当前账号可访问的已发布报表会显示在左侧目录。';
+    renderTabs();
     return;
   }
   if (emptyState) emptyState.hidden = true;
   const selected = reportDefinitions.find(item => item.id === selectedDefinitionId);
-  if (selected) openDefinition(selected);
+  if (selected) openDefinition(selected); else showWelcome();
 }
 
 const startDate = document.querySelector('#start-date');

@@ -72,6 +72,17 @@ var users = new UserStore(Path.Combine(app.Environment.ContentRootPath, "data", 
 var aiSettings = AiAnalysisSettings.FromEnvironment();
 definitions.EnsureSqlText();
 
+if (args.Length == 3 && args[0].Equals("--reset-password", StringComparison.OrdinalIgnoreCase))
+{
+    if (!users.ResetPassword(args[1], args[2]))
+    {
+        Console.Error.WriteLine("未找到指定账号。");
+        Environment.ExitCode = 1;
+    }
+    else Console.WriteLine("密码已重置。");
+    return;
+}
+
 app.Use(async (context, next) =>
 {
     if (context.User.Identity?.IsAuthenticated == true)
@@ -956,6 +967,21 @@ public sealed class UserStore(string path, JsonSerializerOptions options)
             all[index] = updated;
             Write(all);
             return updated;
+        }
+    }
+
+    public bool ResetPassword(string username, string password)
+    {
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password)) return false;
+        lock (Sync)
+        {
+            var all = Read();
+            var index = all.FindIndex(account => account.Username.Equals(username, StringComparison.OrdinalIgnoreCase));
+            if (index < 0) return false;
+            var credentials = HashPassword(password);
+            all[index] = all[index] with { PasswordSalt = credentials.Salt, PasswordHash = credentials.Hash };
+            Write(all);
+            return true;
         }
     }
 
