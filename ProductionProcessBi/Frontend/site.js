@@ -1,4 +1,4 @@
-const API_BASE = window.PROCESS_BI_API_BASE ?? `${window.location.protocol}//${window.location.hostname}:5095`;
+const API_BASE = window.PROCESS_BI_API_BASE ?? window.location.origin;
 const apiUrl = (path) => `${API_BASE}${path}`;
 const get = (url) => fetch(apiUrl(url)).then(r => r.ok ? r.json() : Promise.reject(r.status));
 const dateTime = new Intl.DateTimeFormat('zh-CN', { dateStyle:'short', timeStyle:'short', hour12:false });
@@ -20,12 +20,12 @@ function render(result) {
   const p = result.product;
   const fields = activeFields('product-trace');
   document.querySelector('#product-info').innerHTML = [
-    ['sn','SN', p.sn], ['status','状态', `<span class="status ${p.routeEnd ? 'done' : ''}">${p.status}</span>`], ['modelCode','型号', p.modelCode], ['moNumber','工单', p.moNumber], ['projectNo','项目', p.projectNo], ['quantity','数量', p.quantity], ['firstInTime','首次过站', dateTime.format(new Date(p.firstInTime))], ['lastInTime','最后过站', dateTime.format(new Date(p.lastInTime))], ['errorRecords','异常记录', p.errorRecords], ['ngQuantity','NG 数量', p.ngQuantity], ['reworkRecords','返工记录', p.reworkRecords], ['scrapQuantity','报废数量', p.scrapQuantity]
+    ['sn','SN', safe(p.sn)], ['status','状态', `<span class="status ${p.routeEnd ? 'done' : ''}">${safe(p.status)}</span>`], ['modelCode','型号', safe(p.modelCode)], ['moNumber','工单', safe(p.moNumber)], ['projectNo','项目', safe(p.projectNo)], ['quantity','数量', safe(p.quantity)], ['firstInTime','首次过站', safe(dateTime.format(new Date(p.firstInTime)))], ['lastInTime','最后过站', safe(dateTime.format(new Date(p.lastInTime)))], ['errorRecords','异常记录', safe(p.errorRecords)], ['ngQuantity','NG 数量', safe(p.ngQuantity)], ['reworkRecords','返工记录', safe(p.reworkRecords)], ['scrapQuantity','报废数量', safe(p.scrapQuantity)]
   ].filter(([id]) => fields.length === 0 || fields.includes(id)).map(([, label, value]) => `<div class="info-item"><span>${label}</span><strong>${value}</strong></div>`).join('');
   document.querySelector('#record-count').textContent = `共 ${result.records.length} 条过站记录`;
   document.querySelector('#records-table').innerHTML = `<thead><tr><th>序号</th><th>工序</th><th>工位</th><th>过站时间</th><th>状态</th></tr></thead><tbody>${result.records.map(row => {
     const states = [row.error ? flag('异常','error') : '', row.ngQuantity ? flag(`NG ${row.ngQuantity}`,'error') : '', row.rework ? flag('返工','warn') : '', row.scrap ? flag('报废','error') : '', row.routeEnd ? flag('流程结束','success') : ''].filter(Boolean).join(' ');
-    return `<tr><td>${text(row.sequence)}</td><td>${safe(row.process)}</td><td>${safe(row.station)}</td><td>${dateTime.format(new Date(row.inTime))}</td><td>${states || '正常'}</td></tr>`;
+    return `<tr><td>${safe(row.sequence)}</td><td>${safe(row.process)}</td><td>${safe(row.station)}</td><td>${dateTime.format(new Date(row.inTime))}</td><td>${states || '正常'}</td></tr>`;
   }).join('')}</tbody>`;
   report.hidden = false;
 }
@@ -223,7 +223,7 @@ function renderCapacity(result) {
     ['passRecords','过站记录', s.passRecords], ['serials','参与 SN', s.serials], ['completedSerials','完成 SN', s.completedSerials], ['errorRecords','异常记录', s.errorRecords], ['ngQuantity','NG 数量', s.ngQuantity], ['activeDays','有效生产天数', s.activeDays], ['averageCompletedPerActiveDay','日均完成 SN', s.averageCompletedPerActiveDay]
   ].filter(([id]) => fields.length === 0 || fields.includes(id)).map(([, label, value]) => `<div class="info-item"><span>${label}</span><strong>${value}</strong></div>`).join('');
   document.querySelector('#capacity-count').textContent = `${result.startDate} 至 ${result.endDate}，共 ${result.rows.length} 天有生产记录`;
-  document.querySelector('#capacity-table').innerHTML = `<thead><tr><th>日期</th><th>过站记录</th><th>参与 SN</th><th>完成 SN</th><th>异常记录</th><th>NG 数量</th></tr></thead><tbody>${result.rows.map(row => `<tr><td>${row.date}</td><td>${row.passRecords}</td><td>${row.serials}</td><td>${row.completedSerials}</td><td>${row.errorRecords}</td><td>${row.ngQuantity}</td></tr>`).join('')}</tbody>`;
+  document.querySelector('#capacity-table').innerHTML = `<thead><tr><th>日期</th><th>过站记录</th><th>参与 SN</th><th>完成 SN</th><th>异常记录</th><th>NG 数量</th></tr></thead><tbody>${result.rows.map(row => `<tr><td>${safe(row.date)}</td><td>${safe(row.passRecords)}</td><td>${safe(row.serials)}</td><td>${safe(row.completedSerials)}</td><td>${safe(row.errorRecords)}</td><td>${safe(row.ngQuantity)}</td></tr>`).join('')}</tbody>`;
   startDate.value = result.startDate;
   endDate.value = result.endDate;
   capacityReport.hidden = false;

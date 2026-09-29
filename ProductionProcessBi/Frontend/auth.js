@@ -1,5 +1,5 @@
 (() => {
-  const apiBase = window.PROCESS_BI_API_BASE ?? `${window.location.protocol}//${window.location.hostname}:5095`;
+  const apiBase = window.PROCESS_BI_API_BASE ?? window.location.origin;
   const originalFetch = window.fetch.bind(window);
   window.fetch = (input, init = {}) => originalFetch(input, { ...init, credentials: 'include' });
 
@@ -13,7 +13,7 @@
   function showGate(mode, message = '') {
     let gate = document.querySelector('#auth-gate');
     if (!gate) {
-      document.body.insertAdjacentHTML('beforeend', `<div id="auth-gate"><form id="auth-form"><div class="auth-card"><div class="auth-mark">R</div><h1 id="auth-title"></h1><p id="auth-description"></p><label>用户名<input name="username" autocomplete="username" required minlength="3" maxlength="64"></label><label>密码<input name="password" type="password" autocomplete="current-password" required minlength="2"></label><p class="auth-hint" hidden>首次创建管理员时，密码至少 2 个字符。</p><p id="auth-message" role="status"></p><button class="auth-submit" type="submit">登录</button></div></form></div>`);
+      document.body.insertAdjacentHTML('beforeend', `<div id="auth-gate"><form id="auth-form"><div class="auth-card"><div class="auth-mark">R</div><h1 id="auth-title"></h1><p id="auth-description"></p><label>用户名<input name="username" autocomplete="username" required minlength="3" maxlength="64"></label><label>密码<input name="password" type="password" autocomplete="current-password" required minlength="12"></label><p class="auth-hint" hidden>首次创建管理员时，密码至少 12 个字符。</p><p id="auth-message" role="status"></p><button class="auth-submit" type="submit">登录</button></div></form></div>`);
       gate = document.querySelector('#auth-gate');
       document.querySelector('#auth-form').addEventListener('submit', submit);
     }
@@ -22,7 +22,7 @@
     document.querySelector('#auth-description').textContent = setup ? '首次使用，请创建系统管理员。之后可在后台添加其他账号并分配报表权限。' : '请使用管理员分配的账号登录。';
     const passwordInput = document.querySelector('[name="password"]');
     passwordInput.autocomplete = setup ? 'new-password' : 'current-password';
-    passwordInput.minLength = 2;
+    passwordInput.minLength = 12;
     document.querySelector('.auth-hint').hidden = !setup;
     document.querySelector('#auth-message').textContent = message;
     document.querySelector('#auth-form').dataset.mode = mode;

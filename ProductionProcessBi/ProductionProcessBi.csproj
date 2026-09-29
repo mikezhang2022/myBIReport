@@ -7,4 +7,11 @@
   <ItemGroup>
     <ProjectReference Include="..\BiDataAccess\BiDataAccess.csproj" />
   </ItemGroup>
+
+  <!-- Single-server deployment: ship the browser apps alongside the API so the published
+       output serves them. Development/tooling files are excluded; only browser assets ship. -->
+  <ItemGroup>
+    <Content Include="Frontend\**" Exclude="Frontend\server.py;Frontend\start-frontend.ps1;Frontend\README.md" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="Admin\**" Exclude="Admin\start-admin.ps1;Admin\README.md" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

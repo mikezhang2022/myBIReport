@@ -7,6 +7,8 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using BiDataAccess;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Primitives;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
@@ -50,11 +52,45 @@ var app = builder.Build();
 app.UseCors();
 app.UseAuthentication();
 
-app.MapGet("/", () => Results.Ok(new
+// Single-server deployment: serve the two browser apps as static assets from this process.
+// Frontend is served at the site root ("/"); Admin is served under "/admin/".
+// Only the app folders are mounted, so source, config, and data files cannot be reached.
+// PhysicalFileProvider rejects path traversal ("..") by design; the deny-list additionally
+// blocks development/tooling files that are not browser assets.
+var frontendRoot = Path.Combine(app.Environment.ContentRootPath, "Frontend");
+var adminRoot = Path.Combine(app.Environment.ContentRootPath, "Admin");
+var frontendDenied = new[] { "server.py", "start-frontend.ps1", "README.md" };
+var adminDenied = new[] { "start-admin.ps1", "README.md" };
+
+app.UseDefaultFiles(new DefaultFilesOptions
+{
+    FileProvider = new DenyListFileProvider(new PhysicalFileProvider(frontendRoot), frontendDenied),
+    DefaultFileNames = ["index.html"]
+});
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new DenyListFileProvider(new PhysicalFileProvider(frontendRoot), frontendDenied),
+    ServeUnknownFileTypes = false
+});
+app.UseDefaultFiles(new DefaultFilesOptions
+{
+    RequestPath = "/admin",
+    FileProvider = new DenyListFileProvider(new PhysicalFileProvider(adminRoot), adminDenied),
+    DefaultFileNames = ["index.html"]
+});
+app.UseStaticFiles(new StaticFileOptions
+{
+    RequestPath = "/admin",
+    FileProvider = new DenyListFileProvider(new PhysicalFileProvider(adminRoot), adminDenied),
+    ServeUnknownFileTypes = false
+});
+
+app.MapGet("/api", () => Results.Ok(new
 {
     service = "ProductionProcessBi API",
     status = "running",
-    adminUi = "http://127.0.0.1:5174",
+    frontendUi = "/",
+    adminUi = "/admin/",
     endpoints = new[]
     {
         "/api/report-definitions",
@@ -406,7 +442,7 @@ app.MapGet("/api/report-definitions", (HttpContext context) =>
     return Results.Ok(visible);
 });
 app.MapGet("/api/data-sources", (HttpContext context) =>
-    IsSystemAdmin(context.User) ? Results.Ok(dataSources.GetAll()) : Results.Forbid());
+    IsSystemAdmin(context.User) ? Results.Ok(dataSources.GetAll().Select(ToDataSourceView)) : Results.Forbid());
 app.MapPost("/api/data-sources", (DataSourceDefinition source, HttpContext context) =>
 {
     if (!IsSystemAdmin(context.User)) return Results.Forbid();
@@ -414,7 +450,7 @@ app.MapPost("/api/data-sources", (DataSourceDefinition source, HttpContext conte
     if (source.Provider.ToLowerInvariant() is not ("sqlite" or "sqlserver" or "oracle")) return Results.BadRequest(new { message = "请选择 SQLite、SQL Server 或 Oracle。" });
     var saved = source with { Id = string.IsNullOrWhiteSpace(source.Id) ? Guid.NewGuid().ToString("N") : source.Id, ConnectionString = source.ConnectionString.Trim() };
     dataSources.Save(saved);
-    return Results.Ok(saved);
+    return Results.Ok(ToDataSourceView(saved));
 });
 app.MapPost("/api/data-sources/{id}/test", async (string id, HttpContext context) =>
 {
@@ -656,6 +692,17 @@ static async Task SignIn(HttpContext context, UserAccount account)
 }
 
 static PublicUser ToPublicUser(UserAccount account) => new(account.Id, account.Username, account.DisplayName, account.Role, account.ReportIds, account.Active);
+static DataSourceView ToDataSourceView(DataSourceDefinition source) => new(
+    source.Id, source.Name, source.Provider, source.Active, MaskConnectionString(source.ConnectionString));
+static string MaskConnectionString(string? connectionString)
+{
+    // Never return the raw connection string to the browser; mask credentials so the
+    // management UI can show which data source is active without disclosing secrets.
+    if (string.IsNullOrWhiteSpace(connectionString)) return string.Empty;
+    var masked = System.Text.RegularExpressions.Regex.Replace(connectionString, @"(password|pwd)\s*=\s*[^;]*", "$1=****", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    masked = System.Text.RegularExpressions.Regex.Replace(masked, @"(user\s*id|uid|user)\s*=\s*[^;]*", "$1=****", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    return masked;
+}
 static ReportDefinitionView ToReportView(ReportDefinition definition) => new(
     definition.Id, definition.Category, definition.Name, definition.QueryType, definition.Conditions, definition.DisplayFields,
     definition.Enabled, string.Empty, definition.ReportStyle, definition.EnableCsvExport, definition.DashboardWidgets,
@@ -694,8 +741,8 @@ static string? ValidateNewUser(string? username, string? displayName, string? pa
     if (!RoleNames.All.Contains(role ?? string.Empty, StringComparer.Ordinal))
         return "请选择有效的账号角色。";
     if (string.IsNullOrEmpty(password) && allowEmptyPassword) return null;
-    if (string.IsNullOrWhiteSpace(password) || password.Length < 2)
-        return "密码至少需要 2 个字符。";
+    if (string.IsNullOrWhiteSpace(password) || password.Length < 12)
+        return "密码至少需要 12 个字符。";
     return null;
 }
 
@@ -852,6 +899,7 @@ public sealed record ReportDefinitionView(
     bool Enabled, string SqlText, string ReportStyle, bool EnableCsvExport, List<DashboardWidget>? DashboardWidgets,
     List<ReportFilterView>? Filters);
 public sealed record ReportFilterView(string Name, string Label, string ControlType, bool HasOptionsSql);
+public sealed record DataSourceView(string Id, string Name, string Provider, bool Active, string Display);
 
 public sealed record DashboardWidget(
     string Id,
@@ -889,6 +937,32 @@ public static class RoleNames
     public const string ReportAdmin = "report-admin";
     public const string ReportUser = "report-user";
     public static readonly string[] All = [SystemAdmin, ReportAdmin, ReportUser];
+}
+
+/// <summary>
+/// Wraps an <see cref="IFileProvider"/> and hides files whose names match a deny list,
+/// so development/tooling files are never served as static assets.
+/// </summary>
+public sealed class DenyListFileProvider : IFileProvider
+{
+    private readonly IFileProvider _inner;
+    private readonly HashSet<string> _denied;
+
+    public DenyListFileProvider(IFileProvider inner, IEnumerable<string> denied)
+    {
+        _inner = inner;
+        _denied = new HashSet<string>(denied, StringComparer.OrdinalIgnoreCase);
+    }
+
+    public IFileInfo GetFileInfo(string subpath)
+    {
+        if (_denied.Contains(Path.GetFileName(subpath)))
+            return new NotFoundFileInfo(subpath);
+        return _inner.GetFileInfo(subpath);
+    }
+
+    public IDirectoryContents GetDirectoryContents(string subpath) => _inner.GetDirectoryContents(subpath);
+    public IChangeToken Watch(string filter) => _inner.Watch(filter);
 }
 
 public sealed class UserStore(string path, JsonSerializerOptions options)
@@ -1059,12 +1133,26 @@ public sealed class DataSourceStore(string path, string legacyPath, JsonSerializ
     public bool Activate(string id) { lock (sync) { var all = Read(); if (!all.Any(x => x.Id == id)) return false; Write(all.Select(x => x with { Active = x.Id == id }).ToList()); return true; } }
     private List<DataSourceDefinition> Read()
     {
-        if (File.Exists(path)) return JsonSerializer.Deserialize<List<DataSourceDefinition>>(File.ReadAllText(path), options) ?? [];
+        if (File.Exists(path))
+        {
+            try { return JsonSerializer.Deserialize<List<DataSourceDefinition>>(File.ReadAllText(path), options) ?? []; }
+            catch (JsonException ex) { throw new InvalidOperationException("数据源配置文件损坏，已停止读取以避免覆盖现有配置。请从备份恢复 data-sources.json。", ex); }
+        }
         if (!File.Exists(legacyPath)) return [];
-        var legacy = JsonSerializer.Deserialize<DataSourceSettings>(File.ReadAllText(legacyPath), options);
-        return legacy is null ? [] : [new("sqlite-local", "本地 SQLite", legacy.Provider, $"Data Source={legacy.FilePath}", true)];
+        try
+        {
+            var legacy = JsonSerializer.Deserialize<DataSourceSettings>(File.ReadAllText(legacyPath), options);
+            return legacy is null ? [] : [new("sqlite-local", "本地 SQLite", legacy.Provider, $"Data Source={legacy.FilePath}", true)];
+        }
+        catch (JsonException ex) { throw new InvalidOperationException("旧版数据源配置损坏，无法迁移。请从备份恢复该文件。", ex); }
     }
-    private void Write(List<DataSourceDefinition> all) { Directory.CreateDirectory(Path.GetDirectoryName(path)!); File.WriteAllText(path, JsonSerializer.Serialize(all, new JsonSerializerOptions(options) { WriteIndented = true })); }
+    private void Write(List<DataSourceDefinition> all)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var temporary = path + ".tmp";
+        File.WriteAllText(temporary, JsonSerializer.Serialize(all, new JsonSerializerOptions(options) { WriteIndented = true }));
+        File.Move(temporary, path, true);
+    }
 }
 
 public sealed class ReportDefinitionStore(string path, JsonSerializerOptions options)
@@ -1112,13 +1200,18 @@ public sealed class ReportDefinitionStore(string path, JsonSerializerOptions opt
         }
     }
 
-    private List<ReportDefinition> Read() => File.Exists(path)
-        ? JsonSerializer.Deserialize<List<ReportDefinition>>(File.ReadAllText(path), options) ?? []
-        : [];
+    private List<ReportDefinition> Read()
+    {
+        if (!File.Exists(path)) return [];
+        try { return JsonSerializer.Deserialize<List<ReportDefinition>>(File.ReadAllText(path), options) ?? []; }
+        catch (JsonException ex) { throw new InvalidOperationException("报表配置文件损坏，已停止读取以避免覆盖现有配置。请从备份恢复 report-definitions.json。", ex); }
+    }
 
     private void Write(List<ReportDefinition> definitions)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, JsonSerializer.Serialize(definitions, new JsonSerializerOptions(options) { WriteIndented = true }));
+        var temporary = path + ".tmp";
+        File.WriteAllText(temporary, JsonSerializer.Serialize(definitions, new JsonSerializerOptions(options) { WriteIndented = true }));
+        File.Move(temporary, path, true);
     }
 }
