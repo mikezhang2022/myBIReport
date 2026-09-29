@@ -56,15 +56,6 @@ function showView(viewId, title, breadcrumb, subtitle) {
   document.querySelector('#report-title').textContent = title;
   document.querySelector('#report-subtitle').textContent = subtitle;
 }
-function showWelcome() {
-  selectedDefinitionId = null;
-  document.querySelectorAll('.report-view').forEach(view => view.hidden = view.id !== 'report-welcome');
-  document.querySelector('#breadcrumb-text').textContent = '报表中心';
-  document.querySelector('#report-title').textContent = '报表中心';
-  document.querySelector('#report-subtitle').textContent = '请从左侧目录选择要打开的报表。';
-  renderTabs();
-  renderNavigation();
-}
 function renderTabs() {
   const tabs = document.querySelector('#report-tabs');
   const opened = openedDefinitionIds.map(id => reportDefinitions.find(item => item.id === id)).filter(Boolean);
@@ -81,7 +72,7 @@ function closeDefinition(id) {
   openedDefinitionIds = openedDefinitionIds.filter(item => item !== id);
   if (selectedDefinitionId !== id) { renderTabs(); renderNavigation(); return; }
   const next = reportDefinitions.find(item => item.id === openedDefinitionIds[openedDefinitionIds.length - 1]);
-  if (next) openDefinition(next); else showWelcome();
+  if (next) openDefinition(next); else if (reportDefinitions.length) openDefinition(reportDefinitions[0]);
 }
 function openDefinition(definition) {
   selectedDefinitionId = definition.id;
@@ -215,8 +206,8 @@ async function loadDefinitions() {
     return;
   }
   if (emptyState) emptyState.hidden = true;
-  const selected = reportDefinitions.find(item => item.id === selectedDefinitionId);
-  if (selected) openDefinition(selected); else showWelcome();
+  const selected = reportDefinitions.find(item => item.id === selectedDefinitionId) || reportDefinitions[0];
+  openDefinition(selected);
 }
 
 const startDate = document.querySelector('#start-date');
