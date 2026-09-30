@@ -137,7 +137,8 @@ try {
     Record 'auth.summary-requires-auth' ($r.StatusCode -eq 401) $r.StatusCode
 
     # 6. No connection-string disclosure (needs admin)
-    $pw = 'test-admin-password-123'
+    # Two characters is the temporary minimum accepted by both UI and API.
+    $pw = 'ab'
     $r = CallApi POST "$base/api/auth/setup" ("{`"username`":`"testadmin`",`"displayName`":`"Test Admin`",`"password`":`"$pw`"}") $null
     Record 'auth.setup-creates-admin' ($r.StatusCode -eq 200 -and -not $r.Content.Contains('PasswordHash') -and -not $r.Content.Contains('PasswordSalt')) $r.StatusCode
 

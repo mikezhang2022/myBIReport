@@ -741,8 +741,8 @@ static string? ValidateNewUser(string? username, string? displayName, string? pa
     if (!RoleNames.All.Contains(role ?? string.Empty, StringComparer.Ordinal))
         return "请选择有效的账号角色。";
     if (string.IsNullOrEmpty(password) && allowEmptyPassword) return null;
-    if (string.IsNullOrWhiteSpace(password) || password.Length < 12)
-        return "密码至少需要 12 个字符。";
+    if (string.IsNullOrWhiteSpace(password) || password.Length < 2)
+        return "密码至少需要 2 个字符。";
     return null;
 }
 
