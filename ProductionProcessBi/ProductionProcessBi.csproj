@@ -13,5 +13,9 @@
   <ItemGroup>
     <Content Include="Frontend\**" Exclude="Frontend\server.py;Frontend\start-frontend.ps1;Frontend\README.md" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="Admin\**" Exclude="Admin\start-admin.ps1;Admin\README.md" CopyToPublishDirectory="PreserveNewest" />
+    <!-- Optional Node startup host. Shipped at the publish root, outside the
+         Frontend/Admin static roots, so it is available for LAN deployments but
+         is never served as a static asset by the ASP.NET process. -->
+    <Content Include="node-server.js" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
