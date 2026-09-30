@@ -56,6 +56,24 @@ Copy-Item (Join-Path $projectRoot 'Admin') (Join-Path $temp 'Admin') -Recurse
 Copy-Item (Join-Path $projectRoot 'data') (Join-Path $temp 'data') -Recurse
 # Start with no users so the script can create its own admin (real data is never touched).
 Set-Content -Path (Join-Path $temp 'data/users.json') -Value '[]' -Encoding utf8
+
+# Seed an isolated fixture report so permission/visibility tests don't depend on production data.
+# The real checkout's data/ is never modified; this only touches the temp copy that the app loads.
+$fixtureDefsPath = Join-Path $temp 'data/report-definitions.json'
+$fixtureDefs = Get-Content $fixtureDefsPath -Raw | ConvertFrom-Json
+$fixtureDefs += [PSCustomObject]@{
+    Id = 'jizhuanji-bujian'; Category = '整机'; Name = '整机查询部件信息';
+    QueryType = 'standard'; Conditions = @('sn'); DisplayFields = @(); Enabled = $true;
+    SqlText = "SELECT 'x' AS demo FROM dual"; ReportStyle = 'standard';
+    EnableCsvExport = $true; DashboardWidgets = @(); Filters = @()
+}
+$fixtureDefs += [PSCustomObject]@{
+    Id = 'disabled-secret'; Category = '整机'; Name = '未发布的隐藏报表';
+    QueryType = 'standard'; Conditions = @(); DisplayFields = @(); Enabled = $false;
+    SqlText = "SELECT 'secret' AS s FROM dual"; ReportStyle = 'standard';
+    EnableCsvExport = $false; DashboardWidgets = @(); Filters = @()
+}
+$fixtureDefs | ConvertTo-Json -Depth 20 | Set-Content -Path $fixtureDefsPath -Encoding utf8
 $logFile = Join-Path $temp 'app.log'
 
 $proc = $null
@@ -113,6 +131,21 @@ try {
     $r = CallApi GET "$base/api-config.js" $null $null
     Record 'static.api-config-js' ($r.StatusCode -eq 200 -and $r.Content.Contains('PROCESS_BI_API_BASE')) $r.StatusCode
 
+    # 3d. Admin permissions.js must derive the API origin from the page (same origin /
+    # PROCESS_BI_API_BASE) and must NOT hard-code a fixed host:port (the defect that broke the
+    # admin console on LAN hosts/ports). This is the "across origins/hosts" frontend guard.
+    $r = CallApi GET "$base/admin/permissions.js" $null $null
+    $permSrc = $r.Content
+    $permOk = $r.StatusCode -eq 200 -and $permSrc.Contains('/api') -and ($permSrc.Contains('window.PROCESS_BI_API_BASE') -or $permSrc.Contains('window.location.origin')) -and -not ($permSrc.Contains('5095'))
+    Record 'static.admin-permissions-no-hardcoded-origin' $permOk $r.StatusCode
+
+    # 3e. Frontend loads the report list only after auth resolves (listens for the auth-ready
+    # event and retries on 401) instead of firing once and never recovering.
+    $r = CallApi GET "$base/auth.js" $null $null
+    Record 'static.frontend-auth-dispatches-ready' ($r.StatusCode -eq 200 -and $r.Content.Contains("'process-bi-auth-ready'")) $r.StatusCode
+    $r = CallApi GET "$base/site.js" $null $null
+    Record 'static.frontend-post-auth-load' ($r.StatusCode -eq 200 -and $r.Content.Contains("'process-bi-auth-ready'") -and $r.Content.Contains('ensureDefinitions')) $r.StatusCode
+
     # 4. No source/config/data exposure
     foreach ($path in @('/server.py', '/README.md', '/admin/start-admin.ps1', '/Program.cs', '/data/users.json', '/%2e%2e/Program.cs')) {
         $r = CallApi GET ($base + $path) $null $null 0
@@ -152,6 +185,62 @@ try {
 
     $r = CallApi GET "$base/api/users" $null $session
     Record 'auth.admin-lists-users' ($r.StatusCode -eq 200) $r.StatusCode
+
+    # 7. Report visibility / role-based authorization (isolated fixture: 整机查询部件信息)
+    # Create an authorized report-user and an unassigned report-user (min password kept at 2).
+    $body = @{ username='authorized'; displayName='授权用户'; password='ab'; role='report-user'; reportIds=@('jizhuanji-bujian'); active=$true } | ConvertTo-Json -Compress
+    $r = CallApi POST "$base/api/users" $body $session
+    Record 'users.create-authorized' ($r.StatusCode -eq 201) $r.StatusCode
+    $body = @{ username='unassigned'; displayName='未授权用户'; password='ab'; role='report-user'; reportIds=@(); active=$true } | ConvertTo-Json -Compress
+    $r = CallApi POST "$base/api/users" $body $session
+    Record 'users.create-unassigned' ($r.StatusCode -eq 201) $r.StatusCode
+
+    $authSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $r = CallApi POST "$base/api/auth/login" '{"username":"authorized","password":"ab"}' $authSession
+    Record 'auth.login-authorized' ($r.StatusCode -eq 200) $r.StatusCode
+    $unSession = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    $r = CallApi POST "$base/api/auth/login" '{"username":"unassigned","password":"ab"}' $unSession
+    Record 'auth.login-unassigned' ($r.StatusCode -eq 200) $r.StatusCode
+
+    # Admin (CanManageReports) sees every definition, including the disabled fixture.
+    $r = CallApi GET "$base/api/report-definitions" $null $session
+    $adminJson = $r.Content | ConvertFrom-Json
+    $adminNames = ($adminJson | ForEach-Object { $_.name }) -join ','
+    Record 'perms.admin-sees-fixture' (($adminJson | Where-Object { $_.name -eq '整机查询部件信息' }) -and ($adminJson | Where-Object { $_.name -eq '未发布的隐藏报表' })) $adminNames
+
+    # Authorized report-user sees the enabled fixture but not the disabled one.
+    $r = CallApi GET "$base/api/report-definitions" $null $authSession
+    $authJson = $r.Content | ConvertFrom-Json
+    $authNames = ($authJson | ForEach-Object { $_.name }) -join ','
+    Record 'perms.authorized-sees-fixture-only' (($authJson | Where-Object { $_.name -eq '整机查询部件信息' }) -and -not ($authJson | Where-Object { $_.name -eq '未发布的隐藏报表' })) $authNames
+
+    # No SQL leakage: the report-user view must not contain the raw SqlText.
+    Record 'perms.no-sql-leak' (-not $r.Content.Contains('FROM dual')) 'report-user response omits SqlText'
+
+    # Unassigned report-user sees neither fixture (filtered by Enabled and ReportIds).
+    $r = CallApi GET "$base/api/report-definitions" $null $unSession
+    $unJson = $r.Content | ConvertFrom-Json
+    Record 'perms.unassigned-sees-nothing' (($unJson | Measure-Object).Count -eq 0) (($unJson | ForEach-Object { $_.name }) -join ',')
+
+    # No unauthorized query leakage: unassigned user querying the fixture must 404 and must not
+    # reveal the hidden report name in the response.
+    $r = CallApi GET "$base/api/reports/jizhuanji-bujian/query" $null $unSession
+    $leakName = $r.Content.Contains('整机查询部件信息')
+    Record 'perms.unassigned-query-blocked' ($r.StatusCode -eq 404 -and -not $leakName) ("status=$($r.StatusCode) nameLeak=$leakName")
+
+    # Report-user cannot manage reports (create is forbidden).
+    $r = CallApi POST "$base/api/report-definitions" '{"id":"x","name":"x","queryType":"standard"}' $unSession
+    Record 'perms.unassigned-cannot-manage' ($r.StatusCode -eq 403) $r.StatusCode
+
+    # Visibility must not depend on the Host header (LAN clients may reach the server via a
+    # different hostname/IP); the same authorized user must get identical results.
+    $rSame = CallApi GET "$base/api/report-definitions" $null $authSession
+    try {
+        $params = @{ Method='GET'; Uri="$base/api/report-definitions"; UseBasicParsing=$true; ErrorAction='Stop'; WebSession=$authSession; Headers=@{ Host='bi.example.local' } }
+        $rAlt = Invoke-WebRequest @params
+        $hostAgnostic = $rSame.Content -eq $rAlt.Content
+    } catch { $hostAgnostic = $false }
+    Record 'perms.host-agnostic-visibility' $hostAgnostic 'same result across Host headers'
 
     $failed = ($results | Where-Object { $_.Status -eq 'FAIL' }).Count
     Write-Host ''

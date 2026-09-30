@@ -71,6 +71,9 @@
       if (!response.ok) throw new Error('读取登录状态失败。');
       const user = await response.json();
       window.processBiUser = user;
+      // Signal the rest of the app (e.g. the report directory loader in site.js) that auth
+      // is now resolved, so it can fetch the report list instead of racing a 401.
+      window.dispatchEvent(new CustomEvent('process-bi-auth-ready', { detail: user }));
       const account = document.createElement('div');
       account.className = 'auth-account';
       account.innerHTML = `<span>${escapeHtml(user.displayName)} · ${escapeHtml(roles[user.role] || user.role)}</span><button type="button">退出</button>`;

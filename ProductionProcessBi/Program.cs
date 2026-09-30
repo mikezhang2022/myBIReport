@@ -12,6 +12,7 @@ using Microsoft.Extensions.Primitives;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.StaticFiles;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
@@ -62,6 +63,17 @@ var adminRoot = Path.Combine(app.Environment.ContentRootPath, "Admin");
 var frontendDenied = new[] { "server.py", "start-frontend.ps1", "README.md" };
 var adminDenied = new[] { "start-admin.ps1", "README.md" };
 
+// The UI scripts (site.js, auth.js, permissions.js) are not content-hashed, so a long-lived
+// browser cache on a LAN client could keep serving a previous build (e.g. one with the
+// hard-coded admin port or the pre-auth report load). Keep HTML and JS fresh; other assets
+// (css, images) are safe to cache normally.
+void PreventStaleScripts(StaticFileResponseContext context)
+{
+    var physical = context.File?.PhysicalPath;
+    if (physical is not null && (physical.EndsWith(".html", StringComparison.OrdinalIgnoreCase) || physical.EndsWith(".js", StringComparison.OrdinalIgnoreCase)))
+        context.Context.Response.Headers.CacheControl = "no-cache";
+}
+
 app.UseDefaultFiles(new DefaultFilesOptions
 {
     FileProvider = new DenyListFileProvider(new PhysicalFileProvider(frontendRoot), frontendDenied),
@@ -70,7 +82,8 @@ app.UseDefaultFiles(new DefaultFilesOptions
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new DenyListFileProvider(new PhysicalFileProvider(frontendRoot), frontendDenied),
-    ServeUnknownFileTypes = false
+    ServeUnknownFileTypes = false,
+    OnPrepareResponse = PreventStaleScripts
 });
 app.UseDefaultFiles(new DefaultFilesOptions
 {
@@ -82,7 +95,8 @@ app.UseStaticFiles(new StaticFileOptions
 {
     RequestPath = "/admin",
     FileProvider = new DenyListFileProvider(new PhysicalFileProvider(adminRoot), adminDenied),
-    ServeUnknownFileTypes = false
+    ServeUnknownFileTypes = false,
+    OnPrepareResponse = PreventStaleScripts
 });
 
 app.MapGet("/api", () => Results.Ok(new

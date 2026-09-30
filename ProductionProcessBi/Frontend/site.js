@@ -198,7 +198,14 @@ async function loadDefinitions() {
   renderNavigation();
   const emptyState = document.querySelector('#no-reports');
   if (!reportDefinitions.length) {
+    const account = window.processBiUser || {};
+    const roleLabel = { 'system-admin': '系统管理员', 'report-admin': '报表管理员', 'report-user': '报表使用者' }[account.role] || '当前账号';
+    const who = account.displayName ? `${safe(account.displayName)}（${roleLabel}）` : roleLabel;
     document.querySelectorAll('.report-view').forEach(view => view.hidden = view.id !== 'no-reports');
+    if (emptyState) {
+      emptyState.hidden = false;
+      emptyState.innerHTML = `<article class="empty-reports"><h2>暂无可用报表</h2><p>当前账号 ${who} 暂无已授权且已发布的报表。如果预期应看到某个报表，请联系管理员确认该报表已发布并已分配给本账号。</p></article>`;
+    }
     document.querySelector('#report-title').textContent = '报表中心';
     document.querySelector('#breadcrumb-text').textContent = '报表中心';
     document.querySelector('#report-subtitle').textContent = '当前账号可访问的已发布报表会显示在左侧目录。';
@@ -261,4 +268,27 @@ sidebarToggle.addEventListener('click', () => setSidebarCollapsed(true));
 mainSidebarToggle.addEventListener('click', () => setSidebarCollapsed(false));
 if (window.matchMedia('(max-width:850px)').matches) setSidebarCollapsed(true);
 
-loadDefinitions().catch(() => { navigation.innerHTML = '<p class="navigation-loading">无法加载报表配置。</p>'; });
+// Load the report list only after authentication is known. Firing this before auth resolves
+// produces a 401 that previously left the directory empty forever. If the first attempt still
+// hits a 401 (auth settling), retry a few times before showing a recoverable message.
+async function ensureDefinitions(attempt = 0) {
+  try {
+    await loadDefinitions();
+  } catch (error) {
+    if (String(error) === '401' && attempt < 3) {
+      await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
+      return ensureDefinitions(attempt + 1);
+    }
+    navigation.innerHTML = '<p class="navigation-loading">无法加载报表配置，请刷新页面后重试。</p>';
+  }
+}
+function startDefinitions() {
+  // Both event orders are covered without a second invocation:
+  //  - If auth already resolved by the time this script runs, processBiUser is set synchronously.
+  //  - If auth resolves later, the once-listener fires ensureDefinitions exactly once.
+  // A duplicate timed call is intentionally omitted because it re-runs loadDefinitions() and
+  // can reset the user's currently selected tab after auth-ready already succeeded.
+  if (window.processBiUser) { ensureDefinitions(); return; }
+  window.addEventListener('process-bi-auth-ready', () => ensureDefinitions(), { once: true });
+}
+startDefinitions();

@@ -1,5 +1,8 @@
 (() => {
-  const api = `${window.location.protocol}//${window.location.hostname}:5095/api`;
+  // Derive the API origin from the page's own origin so the admin console keeps working
+  // regardless of the published host/port (LAN IP, reverse proxy, custom port). An explicit
+  // override via window.PROCESS_BI_API_BASE is honored for non-same-origin deployments.
+  const api = `${window.PROCESS_BI_API_BASE ?? window.location.origin}/api`;
   const roleNames = { 'system-admin': '系统管理员', 'report-admin': '报表管理员', 'report-user': '报表使用者' };
   const esc = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
   const roleOptions = selected => Object.entries(roleNames).map(([value, label]) => `<option value="${value}" ${selected === value ? 'selected' : ''}>${label}</option>`).join('');
