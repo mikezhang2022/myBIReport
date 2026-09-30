@@ -2,6 +2,10 @@
   const apiBase = window.PROCESS_BI_API_BASE ?? window.location.origin;
   const originalFetch = window.fetch.bind(window);
   window.fetch = (input, init = {}) => originalFetch(input, { ...init, credentials: 'include' });
+  // Readiness flag so site.js can tell whether this script actually booted. If it never
+  // runs (stale/blocked script, parse error), site.js surfaces a load-error instead of
+  // leaving the report directory stuck on a permanent "loading" label with no login UI.
+  window.__authBootStarted = true;
 
   const roles = {
     'system-admin': '系统管理员',
@@ -9,6 +13,13 @@
     'report-user': '报表使用者'
   };
   const escapeHtml = value => String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
+
+  function notifyUnauthenticated() {
+    // Signal site.js that auth is known to be unauthenticated so it can replace the
+    // report directory's perpetual "loading" label. The listener is registered once,
+    // so a repeat dispatch is harmless; we fire this only on real outcomes below.
+    window.dispatchEvent(new CustomEvent('process-bi-auth-unauthenticated'));
+  }
 
   function showGate(mode, message = '') {
     let gate = document.querySelector('#auth-gate');
@@ -61,11 +72,13 @@
       const status = await statusResponse.json();
       if (status.setupRequired) {
         showGate('setup');
+        notifyUnauthenticated();
         return;
       }
       const response = await originalFetch(`${apiBase}/api/auth/me`, { credentials: 'include' });
       if (response.status === 401) {
         showGate('login');
+        notifyUnauthenticated();
         return;
       }
       if (!response.ok) throw new Error('读取登录状态失败。');
@@ -85,6 +98,7 @@
       (header || document.body).append(account);
     } catch (error) {
       showGate('login', error.message);
+      notifyUnauthenticated();
     }
   }
 

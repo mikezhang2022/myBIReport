@@ -150,6 +150,9 @@ app.Use(async (context, next) =>
 });
 app.UseAuthorization();
 
+// Serve a no-content favicon so browser auto-requests don't fall through to a 404/401
+// (the console noise in `auth.js:66 GET /api/auth/me 401` reports mentioned /favicon.ico 401).
+app.MapGet("/favicon.ico", () => Results.NoContent()).AllowAnonymous();
 app.MapGet("/api/auth/status", () => Results.Ok(new { setupRequired = users.GetAll().Count == 0 })).AllowAnonymous();
 app.MapPost("/api/auth/setup", async (InitialAdminRequest request, HttpContext context) =>
 {

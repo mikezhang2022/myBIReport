@@ -267,6 +267,17 @@ function createServer(options = {}) {
     const parsedUrl = new URL(req.url, 'http://localhost');
     const pathname = parsedUrl.pathname;
 
+    // Browser auto-requests for /favicon.ico must be answered anonymously with
+    // no content. This mirrors the ASP.NET route
+    // (`app.MapGet("/favicon.ico", () => Results.NoContent()).AllowAnonymous()`)
+    // so LAN clients using this Node server don't fall through to a 404, and the
+    // response never touches the API upstream or any filesystem data.
+    if (pathname === '/favicon.ico') {
+      res.writeHead(204, { 'Content-Length': '0' });
+      res.end();
+      return;
+    }
+
     // API routes are proxied first.
     if (pathname === '/api' || pathname.startsWith('/api/')) {
       proxyApi(req, res, apiOrigin);

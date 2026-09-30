@@ -1,0 +1,4 @@
+# Dev/test dependencies installed by `npm install` for jsdom-based tests.
+# The shipped app is static and the production Node server (node-server.js)
+# is dependency-free, so only this folder must be excluded from the repo.
+node_modules/

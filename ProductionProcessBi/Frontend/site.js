@@ -290,5 +290,30 @@ function startDefinitions() {
   // can reset the user's currently selected tab after auth-ready already succeeded.
   if (window.processBiUser) { ensureDefinitions(); return; }
   window.addEventListener('process-bi-auth-ready', () => ensureDefinitions(), { once: true });
+  // When auth settles to "not logged in", the login gate covers the screen, but make sure the
+  // report directory is not left in a permanent "正在载入报表目录…" state behind it.
+  window.addEventListener('process-bi-auth-unauthenticated', resolveNavigationIdle, { once: true });
 }
+
+// Clear the report directory's loading placeholder once auth is known to be unauthenticated,
+// so the navigation is never stuck on a perpetual "loading" label.
+function resolveNavigationIdle() {
+  if (window.processBiUser) return;
+  if (navigation.querySelector('.navigation-loading')) {
+    navigation.innerHTML = '<p class="navigation-note">请先登录后查看报表目录。</p>';
+  }
+}
+
 startDefinitions();
+
+// Defense in depth: if auth.js never booted on this client (stale/blocked script, parse error),
+// no gate will ever appear and the report directory would stay on a permanent "loading" label.
+// Surface a clear load-error — NOT a "请先登录" prompt, because with no auth script there is no
+// login UI to act on. If auth.js booted (the flag is set), its own auth outcome already resolves
+// the directory, so we never second-guess it here.
+setTimeout(() => {
+  if (window.processBiUser || window.__authBootStarted) return;
+  if (navigation.querySelector('.navigation-loading')) {
+    navigation.innerHTML = '<p class="navigation-note">报表目录加载失败，请刷新页面后重试。</p>';
+  }
+}, 2000);

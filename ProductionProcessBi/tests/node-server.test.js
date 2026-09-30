@@ -171,6 +171,19 @@ test('returns 404 for a missing asset', async () => {
   assert.equal(res.status, 404);
 });
 
+test('anonymous GET /favicon.ico returns 204 without touching live data', async () => {
+  // Mirrors the ASP.NET `app.MapGet("/favicon.ico", () => Results.NoContent())
+  // .AllowAnonymous()` behavior. It must answer anonymously (no auth/upstream)
+  // with 204 and an empty body, so browser auto-requests never reach the API
+  // upstream or the data directory.
+  const res = await request(nodePort, '/favicon.ico');
+  assert.equal(res.status, 204);
+  assert.equal(res.body, '');
+  // No upstream cookie or API call should be involved.
+  assert.equal(res.setCookies.length, 0);
+  assert.ok(!('content-type' in res.headers) || res.headers['content-type'] === undefined || res.headers['content-type'] === 'text/plain; charset=utf-8');
+});
+
 // ---------------------------------------------------------------------------
 // Traversal / source / config / data blocking
 // ---------------------------------------------------------------------------
