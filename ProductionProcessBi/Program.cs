@@ -525,6 +525,8 @@ app.MapPost("/api/report-definitions/preview-sql", async (SqlPreviewRequest requ
     parameterNames = System.Text.RegularExpressions.Regex.Matches(sql, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
         .Select(match => match.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     var previewParameters = parameterNames.ToDictionary(name => name, name => (object?)(submittedParameters.GetValueOrDefault(name) ?? string.Empty), StringComparer.OrdinalIgnoreCase);
+    try { sql = MultiValueSql.Expand(sql, previewParameters, (request.Filters ?? []).Where(filter => filter.ControlType == "textarea").Select(filter => filter.Name)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { message = ex.Message }); }
     var parameters = new Dictionary<string, object?>(previewParameters, StringComparer.OrdinalIgnoreCase);
     parameters["biPageLimit"] = 50;
     parameters["biPageOffset"] = 0;
@@ -606,6 +608,8 @@ app.MapGet("/api/reports/{id}/query", async (string id, HttpRequest request) =>
     var page = int.TryParse(request.Query["page"], out var requestedPage) ? Math.Max(1, requestedPage) : 1;
     var pageSize = int.TryParse(request.Query["pageSize"], out var requestedSize) ? Math.Clamp(requestedSize, 1, 100) : 50;
     var parameters = names.ToDictionary(name => name, name => (object?)(request.Query[name].FirstOrDefault() ?? string.Empty), StringComparer.OrdinalIgnoreCase);
+    try { executableSql = MultiValueSql.Expand(executableSql, parameters, (definition.Filters ?? []).Where(filter => filter.ControlType == "textarea").Select(filter => filter.Name)); }
+    catch (ArgumentException ex) { return Results.BadRequest(new { message = ex.Message }); }
     var countParameters = new Dictionary<string, object?>(parameters, StringComparer.OrdinalIgnoreCase);
     // 多取一行只用于判断是否存在下一页，任何一次查询最多从数据库读 101 行。
     parameters["biPageLimit"] = pageSize + 1;

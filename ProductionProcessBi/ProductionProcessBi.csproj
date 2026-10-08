@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="tests/**/*.cs" />
     <ProjectReference Include="..\BiDataAccess\BiDataAccess.csproj" />
   </ItemGroup>
 
