@@ -511,7 +511,20 @@ app.MapPost("/api/report-definitions/preview-sql", async (SqlPreviewRequest requ
 
     var parameterNames = System.Text.RegularExpressions.Regex.Matches(sql, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
         .Select(match => match.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-    var previewParameters = parameterNames.ToDictionary(name => name, name => (object?)(request.Parameters?.GetValueOrDefault(name) ?? string.Empty), StringComparer.OrdinalIgnoreCase);
+    var submittedParameters = new Dictionary<string, string>(request.Parameters ?? new(), StringComparer.OrdinalIgnoreCase);
+    var missingParameter = parameterNames.FirstOrDefault(name =>
+        request.Filters?.FirstOrDefault(filter => filter.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.AllowEmpty != true
+        && string.IsNullOrWhiteSpace(submittedParameters.GetValueOrDefault(name)));
+    if (missingParameter is not null)
+    {
+        var label = request.Filters?.FirstOrDefault(filter => filter.Name.Equals(missingParameter, StringComparison.OrdinalIgnoreCase))?.Label ?? missingParameter;
+        return Results.BadRequest(new { message = $"{label}不能为空。" });
+    }
+    var optionalQuery = new QueryCollection(submittedParameters.ToDictionary(pair => pair.Key, pair => new Microsoft.Extensions.Primitives.StringValues(pair.Value), StringComparer.OrdinalIgnoreCase));
+    sql = RemoveEmptyOptionalConditions(sql, optionalQuery);
+    parameterNames = System.Text.RegularExpressions.Regex.Matches(sql, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
+        .Select(match => match.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    var previewParameters = parameterNames.ToDictionary(name => name, name => (object?)(submittedParameters.GetValueOrDefault(name) ?? string.Empty), StringComparer.OrdinalIgnoreCase);
     var parameters = new Dictionary<string, object?>(previewParameters, StringComparer.OrdinalIgnoreCase);
     parameters["biPageLimit"] = 50;
     parameters["biPageOffset"] = 0;
@@ -574,10 +587,19 @@ app.MapGet("/api/reports/{id}/query", async (string id, HttpRequest request) =>
     if (definition is null) return Results.NotFound(new { message = "未找到可用报表。" });
     if (!CanReadReport(request.HttpContext.User, definition.Id, users)) return Results.NotFound(new { message = "未找到可用报表或当前账号无权查看。" });
     if (!IsReadOnlySelect(definition.SqlText)) return Results.BadRequest(new { message = "报表 SQL 无效。" });
+    var conditionNames = definition.Conditions.Count > 0 ? definition.Conditions :
+        System.Text.RegularExpressions.Regex.Matches(definition.SqlText, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
+            .Select(match => match.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    var missingCondition = conditionNames.FirstOrDefault(name =>
+        definition.Filters?.FirstOrDefault(filter => filter.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.AllowEmpty != true
+        && string.IsNullOrWhiteSpace(request.Query[name].FirstOrDefault()));
+    if (missingCondition is not null)
+    {
+        var label = definition.Filters?.FirstOrDefault(filter => filter.Name.Equals(missingCondition, StringComparison.OrdinalIgnoreCase))?.Label ?? missingCondition;
+        return Results.BadRequest(new { message = $"{label}不能为空。" });
+    }
     var source = dataSources.GetActive();
     if (source is null) return Results.BadRequest(new { message = "请先在数据源管理中设置当前数据源。" });
-    // 查询条件是可选的：空值对应的 AND 条件会从 SQL 中移除，而不是按空字符串过滤。
-    // 例如：WHERE t.ERROR_FLAG = @errorFlag AND t.PRO_SN = @sn，未传 errorFlag 时只保留 SN 条件。
     var executableSql = RemoveEmptyOptionalConditions(definition.SqlText, request.Query);
     var names = System.Text.RegularExpressions.Regex.Matches(executableSql, "[@:]([A-Za-z_][A-Za-z0-9_]*)")
         .Select(x => x.Groups[1].Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -723,7 +745,7 @@ static string MaskConnectionString(string? connectionString)
 static ReportDefinitionView ToReportView(ReportDefinition definition) => new(
     definition.Id, definition.Category, definition.Name, definition.QueryType, definition.Conditions, definition.DisplayFields,
     definition.Enabled, string.Empty, definition.ReportStyle, definition.EnableCsvExport, definition.DashboardWidgets,
-    definition.Filters?.Select(filter => new ReportFilterView(filter.Name, filter.Label, filter.ControlType, !string.IsNullOrWhiteSpace(filter.OptionsSql))).ToList());
+    definition.Filters?.Select(filter => new ReportFilterView(filter.Name, filter.Label, filter.ControlType, !string.IsNullOrWhiteSpace(filter.OptionsSql), filter.AllowEmpty)).ToList());
 static UserAccount? CurrentUser(HttpContext context, UserStore users)
 {
     var id = context.User.FindFirstValue(ClaimTypes.NameIdentifier);
@@ -910,12 +932,12 @@ public sealed record ReportDefinition(
     List<DashboardWidget>? DashboardWidgets = null,
     List<ReportFilter>? Filters = null);
 
-public sealed record ReportFilter(string Name, string Label, string ControlType = "text", string? OptionsSql = null);
+public sealed record ReportFilter(string Name, string Label, string ControlType = "text", string? OptionsSql = null, bool AllowEmpty = false);
 public sealed record ReportDefinitionView(
     string Id, string Category, string Name, string QueryType, List<string> Conditions, List<string> DisplayFields,
     bool Enabled, string SqlText, string ReportStyle, bool EnableCsvExport, List<DashboardWidget>? DashboardWidgets,
     List<ReportFilterView>? Filters);
-public sealed record ReportFilterView(string Name, string Label, string ControlType, bool HasOptionsSql);
+public sealed record ReportFilterView(string Name, string Label, string ControlType, bool HasOptionsSql, bool AllowEmpty = false);
 public sealed record DataSourceView(string Id, string Name, string Provider, bool Active, string Display);
 
 public sealed record DashboardWidget(
@@ -931,7 +953,7 @@ public sealed record DashboardWidget(
     int Height = 300);
 
 public sealed record SqlValidationRequest(string? SqlText);
-public sealed record SqlPreviewRequest(string? SqlText, Dictionary<string, string>? Parameters);
+public sealed record SqlPreviewRequest(string? SqlText, Dictionary<string, string>? Parameters, List<ReportFilter>? Filters = null);
 public sealed record DataSourceDefinition(string Id, string Name, string Provider, string ConnectionString, bool Active = false);
 public sealed record InitialAdminRequest(string? Username, string? DisplayName, string? Password);
 public sealed record LoginRequest(string? Username, string? Password);
